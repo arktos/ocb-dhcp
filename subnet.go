@@ -4,7 +4,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
-	dhcp "github.com/krolaw/dhcp4"
+	dhcp "github.com/arktos/dhcp4"
 	"github.com/willf/bitset"
 	"log"
 	"net"

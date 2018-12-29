@@ -2,11 +2,11 @@
 package main
 
 import (
+	dhcp "github.com/arktos/dhcp4"
+	"github.com/arktos/dhcp4/conn"
 	"log"
 	"net"
 	"strings"
-
-	dhcp "github.com/krolaw/dhcp4"
 )
 
 func RunDhcpHandler(dhcpInfo *DataTracker, intf net.Interface, myIp string) {
@@ -14,12 +14,7 @@ func RunDhcpHandler(dhcpInfo *DataTracker, intf net.Interface, myIp string) {
 
 	serverIP, _, _ := net.ParseCIDR(myIp)
 	serverIP = serverIP.To4()
-	handler := &DHCPHandler{
-		ip:   serverIP,
-		intf: intf,
-		info: dhcpInfo,
-	}
-	log.Fatal(dhcp.ListenAndServeIf(intf.Name, handler))
+	log.Fatal(conn.NewUDP4FilterListener(intf.Name, myIp))
 }
 
 func StartDhcpHandlers(dhcpInfo *DataTracker, serverIp string) error {

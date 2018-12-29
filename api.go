@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/ant0ine/go-json-rest/rest"
-	dhcp "github.com/krolaw/dhcp4"
+	dhcp "github.com/arktos/dhcp4"
 )
 
 /*
