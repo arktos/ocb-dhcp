@@ -14,7 +14,27 @@ func RunDhcpHandler(dhcpInfo *DataTracker, intf net.Interface, myIp string) {
 
 	serverIP, _, _ := net.ParseCIDR(myIp)
 	serverIP = serverIP.To4()
-	log.Fatal(conn.NewUDP4FilterListener(intf.Name, myIp))
+	handler := &DHCPHandler{
+		ip:   serverIP,
+		intf: intf,
+		info: dhcpInfo,
+	}
+	// log.Fatal(dhcp.ListenAndServe(handler))
+	listener, err := conn.NewUDP4FilterListener("nfe0", "192.168.89.7:67")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Fatal(dhcp.Serve(listener, handler))
+
+	// Should be:
+	//
+	// log.Fatal(dhcp.Serve(intf.Name, handler))
+	//
+	// where intf.Name should be replaced with a custom conn struct.
+	// The conn struct is responsible for listening, something which
+	// seems to work, but also, it is responsible for writing packets
+	// to the network, something which it doesn't do right.
 }
 
 func StartDhcpHandlers(dhcpInfo *DataTracker, serverIp string) error {
@@ -80,6 +100,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 
 	giaddr := p.GIAddr()
 	if !giaddr.Equal(net.IPv4zero) {
+		log.Println("Received unicast message on ", h.intf.Name)
 		subnet = h.info.FindSubnet(giaddr)
 	} else {
 		log.Println("Received Broadcast/Local message on ", h.intf.Name)
