@@ -20,7 +20,7 @@ func RunDhcpHandler(dhcpInfo *DataTracker, intf net.Interface, myIp string) {
 		info: dhcpInfo,
 	}
 	// log.Fatal(dhcp.ListenAndServe(handler))
-	listener, err := conn.NewUDP4FilterListener("nfe0", "192.168.89.7:67")
+	listener, err := conn.NewBPFListener(intf.Name, myIp)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -143,10 +143,11 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 	}
 
 	nic := p.CHAddr().String()
+	hostname := string(options[dhcp.OptionHostName])
 	switch msgType {
 
 	case dhcp.Discover:
-		lease, binding := subnet.find_or_get_info(h.info, nic, p.CIAddr())
+		lease, binding := subnet.find_or_get_info(h.info, nic, p.CIAddr(), hostname)
 		if lease == nil {
 			log.Println("Out of IPs for ", subnet.Name, ", ignoring")
 			return nil

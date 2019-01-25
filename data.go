@@ -2,12 +2,11 @@ package main
 
 import (
 	"errors"
+	dhcp "github.com/arktos/dhcp4"
 	"log"
 	"net"
 	"net/http"
 	"sync"
-
-	dhcp "github.com/arktos/dhcp4"
 )
 
 type DataTracker struct {

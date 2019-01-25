@@ -130,7 +130,7 @@ func (subnet *Subnet) getFreeIP() (*net.IP, bool) {
 	return nil, save_me
 }
 
-func (subnet *Subnet) find_or_get_info(dt *DataTracker, nic string, suggest net.IP) (*Lease, *Binding) {
+func (subnet *Subnet) find_or_get_info(dt *DataTracker, nic string, suggest net.IP, hostname string) (*Lease, *Binding) {
 	// Fast path to see if we have a good lease
 	subnet.lock.RLock()
 	binding := subnet.Bindings[nic]
@@ -182,9 +182,10 @@ func (subnet *Subnet) find_or_get_info(dt *DataTracker, nic string, suggest net.
 			}
 		}
 		lease = &Lease{
-			Ip:    *theip,
-			Mac:   nic,
-			Valid: true,
+			Ip:       *theip,
+			Mac:      nic,
+			Valid:    true,
+			Hostname: hostname,
 		}
 		subnet.Leases[nic] = lease
 		subnet.lock.Unlock()

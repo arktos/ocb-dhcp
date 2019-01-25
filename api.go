@@ -46,6 +46,7 @@ type Lease struct {
 	Mac        string    `json:"mac"`
 	Valid      bool      `json:"valid"`
 	ExpireTime time.Time `json:"expire_time"`
+	Hostname   string    `json:"hostname,omitempty"`
 }
 
 type Binding struct {
