@@ -4,12 +4,9 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"github.com/arktos/dhcp4/conn"
 	"golang.org/x/sys/unix"
 	"gopkg.in/gcfg.v1"
 	"os"
-	// "os/user"
-	// "strconv"
 )
 
 type Config struct {
@@ -42,42 +39,37 @@ func main() {
 		fmt.Fprintln(os.Stderr, cerr)
 		os.Exit(1)
 	}
-	// unix.Pledge("stdio inet id", "")
+
 	fs, err := NewFileStore(data_dir + "/database.json")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	// Det här är en av två saker som kräver extra privilegier, den andra
-	// är NewBPFListener() som anropas av RunDHCPHandler i dhcp.go. Kunde
-	// man initialisera bägge här skulle man kunna kasta bort alla extra
-	// privilegier efter denna rad.
-	// Anropskedjan som är intressant ser ut som:
-	// StartDhcpHandlers() -> RunDHCPHandler() -> NewBPFListener()
 	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
 	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
 
 	fe := NewFrontend(cert_pem, key_pem, cfg, fs)
-	listener, err := conn.NewBPFListener(ifi, "whatever")
+	listener, err := NewBPFListener(ifi)
 
-	err = unix.Unveil("/var/cache/rebar-dhcp/database.json", "rw")
+	err = unix.Unveil("/var/cache/rebar-dhcp", "rwc")
 	err = unix.UnveilBlock()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Couldn't block filesystem access, exiting.")
 		os.Exit(1)
 	}
-	// Sådär då, nu kan processen enbart läsa/skriva till en specifik
-	// fil. Synd bara att sökvägen är hårdkodad…
+	// Sådär då, nu kan processen enbart läsa/skriva till en
+	// specifik fil.
 
 	// Här borde man kunna kasta bort alla privilegier.
 	// Men det kan man inte, för av någon anledning går
 	// det inte att spara data då…
+	// Och anledningen är att idiomatisk Go inte verkar
+	// vara att öppna en fil för att sedan skriva/läsa/skriva
+	// utan att öppna den var gång. Det ställer till problem
+	// då filen/databasen ägs av root.
 
-	if err := StartDhcpHandlers(fe.DhcpInfo, ifi, listener); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	go RunDhcpHandler(fe.DhcpInfo, listener)
 
 	// Men här går det även om det känns lite “för sent”…
 	// uid, _ := user.Lookup("nobody")

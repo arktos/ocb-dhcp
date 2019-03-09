@@ -4,9 +4,9 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
-	dhcp "github.com/arktos/dhcp4"
+	"fmt"
+	dhcp "github.com/krolaw/dhcp4"
 	"github.com/willf/bitset"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -228,7 +228,7 @@ func (s *Subnet) build_options(lease *Lease, binding *Binding) (dhcp.Options, ti
 		for _, v := range binding.Options {
 			b, err := convertOptionValueToByte(v.Code, v.Value)
 			if err != nil {
-				log.Println("Failed to parse option: ", v.Code, " ", v.Value)
+				fmt.Println("Failed to parse option: ", v.Code, " ", v.Value)
 			} else {
 				opts[v.Code] = b
 			}

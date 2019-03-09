@@ -1,87 +1,48 @@
-// Example of minimal DHCP server:
+// +build !openbsd
+
 package main
 
 import (
-	dhcp "github.com/arktos/dhcp4"
-	"github.com/arktos/dhcp4/conn"
+	"fmt"
+	dhcp "github.com/krolaw/dhcp4"
 	"log"
 	"net"
-	"strings"
+	"os"
 )
 
-func RunDhcpHandler(dhcpInfo *DataTracker, intf net.Interface, myIp string) {
-	log.Println("Starting on interface: ", intf.Name, " with server ip: ", myIp)
+func RunDhcpHandler(tracker *DataTracker, intf *net.Interface, listener *conn.BPFListener) error {
+	var siaddr net.IP
 
-	serverIP, _, _ := net.ParseCIDR(myIp)
-	serverIP = serverIP.To4()
-	handler := &DHCPHandler{
-		ip:   serverIP,
-		intf: intf,
-		info: dhcpInfo,
-	}
-	// log.Fatal(dhcp.ListenAndServe(handler))
-	listener, err := conn.NewBPFListener(intf.Name, myIp)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Fatal(dhcp.Serve(listener, handler))
-
-	// Should be:
-	//
-	// log.Fatal(dhcp.Serve(intf.Name, handler))
-	//
-	// where intf.Name should be replaced with a custom conn struct.
-	// The conn struct is responsible for listening, something which
-	// seems to work, but also, it is responsible for writing packets
-	// to the network, something which it doesn't do right.
-}
-
-func StartDhcpHandlers(dhcpInfo *DataTracker, serverIp string) error {
-	intfs, err := net.Interfaces()
+	addrs, err := intf.Addrs()
 	if err != nil {
 		return err
 	}
-	for _, intf := range intfs {
-		if (intf.Flags & net.FlagLoopback) == net.FlagLoopback {
-			continue
-		}
-		if (intf.Flags & net.FlagUp) != net.FlagUp {
-			continue
-		}
-		if strings.HasPrefix(intf.Name, "veth") {
-			continue
-		}
-		var sip string
-		addrs, err := intf.Addrs()
-		if err != nil {
-			return err
-		}
 
-		for _, addr := range addrs {
-			thisIP, _, _ := net.ParseCIDR(addr.String())
-			// Only care about addresses that are not link-local.
-			if !thisIP.IsGlobalUnicast() {
-				continue
-			}
-			// Only deal with IPv4 for now.
-			if thisIP.To4() == nil {
-				continue
-			}
-
-			if serverIp != "" && serverIp == addr.String() {
-				sip = addr.String()
-				break
-			}
-		}
-
-		if sip == "" {
+	for _, addr := range addrs {
+		thisIP, _, _ := net.ParseCIDR(addr.String())
+		// Only care about addresses that are not link-local.
+		if !thisIP.IsGlobalUnicast() {
 			continue
 		}
-		// Only run the first one that matches
-		go RunDhcpHandler(dhcpInfo, intf, sip)
+		// Only deal with IPv4 for now.
+		if thisIP.To4() == nil {
+			continue
+		}
+		// Spelar egentligen ingen roll vilken address man använder
+		// för siaddr. Det enda viktiga är att den är unik.
+		siaddr = thisIP
 		break
 	}
+
+	fmt.Fprintln(os.Stdout, "Starting on interface: ", intf.Name)
+
+	// serverIP, _, _ := net.ParseCIDR(sip)
+	handler := &DHCPHandler{
+		ip:   siaddr.To4(),
+		intf: *intf,
+		info: tracker,
+	}
+	log.Fatal(dhcp.Serve(listener, handler))
 	return nil
 }
 
@@ -100,13 +61,13 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 
 	giaddr := p.GIAddr()
 	if !giaddr.Equal(net.IPv4zero) {
-		log.Println("Received unicast message on ", h.intf.Name)
+		fmt.Fprintln(os.Stdout, "Received unicast message on ", h.intf.Name)
 		subnet = h.info.FindSubnet(giaddr)
 	} else {
-		log.Println("Received Broadcast/Local message on ", h.intf.Name)
+		fmt.Fprintln(os.Stdout, "Received Broadcast/Local message on ", h.intf.Name)
 		addrs, err := h.intf.Addrs()
 		if err != nil {
-			log.Println("Can't find addresses for ", h.intf.Name, ": ", err)
+			fmt.Fprintln(os.Stdout, "Can't find addresses for ", h.intf.Name, ": ", err)
 		}
 
 		for _, a := range addrs {
@@ -126,7 +87,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 
 		if ignore_anonymus {
 			// Search all subnets for a binding. First wins
-			log.Println("Looking up bound subnet for ", p.CHAddr().String())
+			fmt.Fprintln(os.Stdout, "Looking up bound subnet for ", p.CHAddr().String())
 			subnet = h.info.FindBoundIP(p.CHAddr())
 		}
 
@@ -138,7 +99,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 	}
 
 	if subnet == nil {
-		log.Println("Can not find subnet for packet, ignoring")
+		fmt.Fprintln(os.Stdout, "Can not find subnet for packet, ignoring")
 		return
 	}
 
@@ -149,12 +110,12 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 	case dhcp.Discover:
 		lease, binding := subnet.find_or_get_info(h.info, nic, p.CIAddr(), hostname)
 		if lease == nil {
-			log.Println("Out of IPs for ", subnet.Name, ", ignoring")
+			fmt.Fprintln(os.Stdout, "Out of IPs for ", subnet.Name, ", ignoring")
 			return nil
 		}
 		// Ignore unknown MAC address
 		if ignore_anonymus && binding == nil {
-			log.Println("Ignoring request from unknown MAC address")
+			fmt.Fprintln(os.Stdout, "Ignoring request from unknown MAC address")
 			return dhcp.ReplyPacket(p, dhcp.NAK, h.ip, nil, 0, nil)
 		}
 
@@ -165,7 +126,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 			lease.Ip,
 			lease_time,
 			subnet.Options.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]))
-		log.Println("Discover: Handing out: ", reply.YIAddr(), " to ", reply.CHAddr())
+		fmt.Fprintln(os.Stdout, "Discover: Handing out: ", reply.YIAddr(), " to ", reply.CHAddr())
 		return reply
 
 	case dhcp.Request:
@@ -185,7 +146,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 		lease, binding := subnet.find_info(h.info, nic)
 		// Ignore unknown MAC address
 		if ignore_anonymus && binding == nil {
-			log.Println("Ignoring request from unknown MAC address")
+			fmt.Fprintln(os.Stdout, "Ignoring request from unknown MAC address")
 			return dhcp.ReplyPacket(p, dhcp.NAK, h.ip, nil, 0, nil)
 		}
 		if lease == nil || !lease.Ip.Equal(reqIP) {
@@ -206,7 +167,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 		} else if subnet.NextServer != nil {
 			reply.SetSIAddr(*subnet.NextServer)
 		}
-		log.Println("Request: Handing out: ", reply.YIAddr(), " to ", reply.CHAddr())
+		fmt.Fprintln(os.Stdout, "Request: Handing out: ", reply.YIAddr(), " to ", reply.CHAddr())
 		return reply
 
 	case dhcp.Release, dhcp.Decline:

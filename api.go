@@ -1,14 +1,15 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/ant0ine/go-json-rest/rest"
-	dhcp "github.com/arktos/dhcp4"
+	dhcp "github.com/krolaw/dhcp4"
 )
 
 /*
@@ -256,7 +257,40 @@ func (fe *Frontend) NextServer(w rest.ResponseWriter, r *rest.Request) {
 	w.WriteJson(nextServer)
 }
 
-func (fe *Frontend) RunServer(blocking bool) http.Handler {
+func (fe *Frontend) GetChaddr(w rest.ResponseWriter, r *rest.Request) {
+	// Skulle behöva läsa på lite om
+	// https://github.com/ant0ine/go-json-rest
+	// Behövs nämligen två parametrar: subnet och chaddr.
+	subnetName := r.PathParam("id")
+	chaddr := r.PathParam("mac")
+
+	fmt.Println(chaddr)
+	// Verkar som om ingen annan funktion låser subnätet, kanske inte jag heller
+	// behöver göra det? Jag prövar, det kan ju gå…
+	subnet := fe.DhcpInfo.Subnets[subnetName]
+	if subnet == nil {
+		rest.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	// Om jag läser koden rätt så är subnet.Leases en karta med en sträng
+	// motsvarande en MAC som nyckel och en pekare till ett lån som värde.
+	// Enda problemet här är väl hur strängen skall se ut?
+	l, ok := subnet.Leases[chaddr]
+	if !ok {
+		rest.Error(w, "Not Found", http.StatusNotFound)
+	}
+
+	fmt.Println(*l)
+	// Okej, vi har nu ett lån. Vilken datastruktur i go går att konvertera
+	// till JSON på formen {'mac': 'blablabla', 'ip': '10.0.0.1'}?
+	// Enklaste är väl att helt enkelt använda en Struct Lease{}?
+	// Låt vara att den kanske läcker lite information, men är man redan
+	// här och rotar så…
+	w.WriteJson(*l)
+}
+
+func (fe *Frontend) RunServer(blocking bool, certs *tls.Config) {
 	api := rest.NewApi()
 	api.Use(&rest.AuthBasicMiddleware{
 		Realm: "test zone",
@@ -272,6 +306,7 @@ func (fe *Frontend) RunServer(blocking bool) http.Handler {
 	router, err := rest.MakeRouter(
 		rest.Get("/subnets", fe.GetAllSubnets),
 		rest.Get("/subnets/#id", fe.GetSubnet),
+		rest.Get("/subnets/#id/#mac", fe.GetChaddr),
 		rest.Post("/subnets", fe.CreateSubnet),
 		rest.Put("/subnets/#id", fe.UpdateSubnet),
 		rest.Delete("/subnets/#id", fe.DeleteSubnet),
@@ -280,18 +315,25 @@ func (fe *Frontend) RunServer(blocking bool) http.Handler {
 		rest.Put("/subnets/#id/next_server/#ip", fe.NextServer),
 	)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 	api.SetApp(router)
 
 	connStr := fmt.Sprintf(":%d", fe.cfg.Network.Port)
-	log.Println("Web Interface Using", connStr)
-	if blocking {
-		if fe.cert_pem == "" || fe.key_pem == "" {
-			log.Fatal(http.ListenAndServe(connStr, api.MakeHandler()))
-		} else {
-			log.Fatal(http.ListenAndServeTLS(connStr, fe.cert_pem, fe.key_pem, api.MakeHandler()))
-		}
+	fmt.Println("Web Interface Using", connStr)
+
+	server := http.Server{
+		Addr:      connStr,
+		Handler:   api.MakeHandler(),
+		TLSConfig: certs,
 	}
-	return api.MakeHandler()
+
+	defer server.Close()
+	e := server.ListenAndServeTLS("", "")
+	// e := http.ListenAndServeTLS(connStr, fe.cert_pem, fe.key_pem, api.MakeHandler())
+	if e != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

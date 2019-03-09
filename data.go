@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	dhcp "github.com/arktos/dhcp4"
+	dhcp "github.com/krolaw/dhcp4"
 	"log"
 	"net"
 	"net/http"

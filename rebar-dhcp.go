@@ -1,10 +1,18 @@
+// +build !openbsd
+
 package main
 
 import (
+	"crypto/tls"
 	"flag"
-	"log"
-
+	"fmt"
+	"github.com/krolaw/dhcp4/conn"
+	"golang.org/x/sys/unix"
 	"gopkg.in/gcfg.v1"
+	"net"
+	"os"
+	"os/user"
+	"strconv"
 )
 
 type Config struct {
@@ -17,14 +25,14 @@ type Config struct {
 
 var ignore_anonymus bool
 var config_path, key_pem, cert_pem, data_dir string
-var server_ip string
+var ifi string
 
 func init() {
 	flag.StringVar(&config_path, "config_path", "/etc/rebar-dhcp.conf", "Path to config file")
 	flag.StringVar(&key_pem, "key_pem", "/etc/dhcp-https-key.pem", "Path to key file")
 	flag.StringVar(&cert_pem, "cert_pem", "/etc/dhcp-https-cert.pem", "Path to cert file")
 	flag.StringVar(&data_dir, "data_dir", "/var/cache/rebar-dhcp", "Path to store data")
-	flag.StringVar(&server_ip, "server_ip", "192.168.89.6/24", "Server IP to return in packets (e.g. 10.10.10.1/24)")
+	flag.StringVar(&ifi, "interface", "em0", "Network interface to listen on")
 	flag.BoolVar(&ignore_anonymus, "ignore_anonymus", false, "Ignore unknown MAC addresses")
 }
 
@@ -34,17 +42,60 @@ func main() {
 	var cfg Config
 	cerr := gcfg.ReadFileInto(&cfg, config_path)
 	if cerr != nil {
-		log.Fatal(cerr)
+		fmt.Fprintln(os.Stderr, cerr)
+		os.Exit(1)
 	}
+	// unix.Pledge("stdio inet id", "")
 	fs, err := NewFileStore(data_dir + "/database.json")
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
+
+	iface, err := net.InterfaceByName(ifi)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "No interface by that name.")
+	}
+
+	// Det här är en av två saker som kräver extra privilegier, den andra
+	// är NewBPFListener() som anropas av RunDHCPHandler i dhcp.go. Kunde
+	// man initialisera bägge här skulle man kunna kasta bort alla extra
+	// privilegier efter denna rad.
+	// Anropskedjan som är intressant ser ut som:
+	// StartDhcpHandlers() -> RunDHCPHandler() -> NewBPFListener()
+	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
+	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
 
 	fe := NewFrontend(cert_pem, key_pem, cfg, fs)
 
-	if err := StartDhcpHandlers(fe.DhcpInfo, server_ip); err != nil {
-		log.Fatal(err)
+	// Varför behöver “listener” egentligen namnet på nätverksgränssnittet?
+	// Vi har redan en pekare *iface.
+	// Egentligen är ju lösningen även här att skita i hur FilterListener beter
+	// sig och låta BPFListener ha ett publikt attribut “Iface”. Då lyssnaren
+	// redan skickas vidare som arguement överallt så…
+	listener, err := conn.NewBPFListener(ifi, "whatever")
+
+	// Här borde man kunna kasta bort alla privilegier.
+	// Men det kan man inte, för av någon anledning går
+	// det inte att spara data då…
+
+	go RunDhcpHandler(fe.DhcpInfo, iface, listener)
+
+	// Men här går det även om det känns lite “för sent”…
+	uid, _ := user.Lookup("nobody")
+	gid, _ := user.LookupGroup("nogroup")
+	gid_int, _ := strconv.Atoi(gid.Gid)
+	uid_int, _ := strconv.Atoi(uid.Uid)
+
+	// Om man inte sätter uid först så har man inga rättigheter
+	// för att sätta gid.
+	err = unix.Setgid(gid_int)
+	err = unix.Setuid(uid_int)
+
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	fe.RunServer(true)
+
+	fe.RunServer(true, tls_cfg)
 }
