@@ -173,22 +173,7 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		copy(iph.src[:], net.IPv4zero.To4())
 		copy(iph.dst[:], net.IPv4bcast.To4())
 		// Length and checksum are calculated later.
-	} else {
-		fmt.Fprintf(os.Stdout, "%s\n", dst_ip.String())
-		copy(iph.dst[:], dst_ip.To4())
 
-		// haddr_ := packet.CHAddr()
-		haddr, err := b.arpconn.Resolve(dst_ip)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "ARP failure.")
-			// return 0, nil
-		}
-		fmt.Fprintln(os.Stdout, haddr)
-		dst_hwaddr = haddr
-		// Find out some way to set the source IP
-	}
-
-	if dst_ip.Equal(net.IPv4bcast) {
 		udph := UDPHeader{
 			src:  uint16(67),
 			dst:  uint16(68),
@@ -242,18 +227,28 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 			return 0, err
 		}
 
-		if dst_ip.Equal(net.IPv4bcast) {
-			// Send it.
-			addr := &raw.Addr{HardwareAddr: dst_hwaddr}
-			return b.handle.WriteTo(g, addr)
-		}
+		// Send it.
+		addr := &raw.Addr{HardwareAddr: dst_hwaddr}
+		return b.handle.WriteTo(g, addr)
+	} else {
+		// Vad som borde göras här är att göra en ARP-förfrågan och
+		// konstruera ett ethernet-paket enligt ovan.
+
+		// fmt.Fprintf(os.Stdout, "%s\n", dst_ip.String())
+		// copy(iph.dst[:], dst_ip.To4())
+		//
+		// // haddr_ := packet.CHAddr()
+		// haddr, err := b.arpconn.Resolve(dst_ip)
+		// if err != nil {
+		//     fmt.Fprintln(os.Stderr, "ARP failure.")
+		//     // return 0, nil
+		// }
+		// fmt.Fprintln(os.Stdout, haddr)
+		// dst_hwaddr = haddr
+		// Find out some way to set the source IP
+		fmt.Fprintln(os.Stdout, "This should be run.")
+		return b.conn.WriteTo(p, b.cm, addr)
 	}
-
-	// Vad som borde göras här är att göra en ARP-förfrågan och
-	// konstruera ett ethernet-paket enligt ovan.
-
-	fmt.Fprintln(os.Stdout, "This should be run.")
-	return b.conn.WriteTo(p, b.cm, addr)
 }
 
 func (b *BPFListener) Close() error {
