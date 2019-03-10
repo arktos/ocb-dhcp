@@ -188,64 +188,65 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		// Find out some way to set the source IP
 	}
 
-	udph := UDPHeader{
-		src:  uint16(67),
-		dst:  uint16(68),
-		ulen: uint16(8 + len(p)),
-	}
-	// The checksum needs some field from the IP header,
-	// so wait to calculate the checksum.
-
-	totalLen := 20 + udph.ulen
-	if totalLen > 0xffff {
-		fmt.Fprintf(os.Stderr, "Message is too large to fit into a single datagram: %v > %v\n", totalLen, 0xffff)
-		return 0, err
-	}
-
-	iph.iplen = uint16(totalLen)
-	iph.checksum()
-
-	// the kernel doesn't touch the UDP checksum, so we can either set it
-	// correctly or leave it zero to indicate that we didn't use a checksum
-	udph.checksum(&iph, p)
-
-	err = binary.Write(&dgram, binary.BigEndian, &iph)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding the IP header: %v\n", err)
-		return 0, err
-	}
-	err = binary.Write(&dgram, binary.BigEndian, &udph)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding the UDP header: %v\n", err)
-		return 0, err
-	}
-	err = binary.Write(&dgram, binary.BigEndian, &p)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding the payload: %v\n", err)
-		return 0, err
-	}
-
-	buf := dgram.Bytes()
-
-	// Construct the ethernet frame
-	frame := &ethernet.Frame{
-		Destination: dst_hwaddr,
-		Source:      b.Iface.HardwareAddr,
-		EtherType:   0x0800,
-		Payload:     buf,
-	}
-
-	g, err := frame.MarshalBinary()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 0, err
-	}
-
 	if dst_ip.Equal(net.IPv4bcast) {
+		udph := UDPHeader{
+			src:  uint16(67),
+			dst:  uint16(68),
+			ulen: uint16(8 + len(p)),
+		}
+		// The checksum needs some field from the IP header,
+		// so wait to calculate the checksum.
 
-		// Send it.
-		addr := &raw.Addr{HardwareAddr: dst_hwaddr}
-		return b.handle.WriteTo(g, addr)
+		totalLen := 20 + udph.ulen
+		if totalLen > 0xffff {
+			fmt.Fprintf(os.Stderr, "Message is too large to fit into a single datagram: %v > %v\n", totalLen, 0xffff)
+			return 0, err
+		}
+
+		iph.iplen = uint16(totalLen)
+		iph.checksum()
+
+		// the kernel doesn't touch the UDP checksum, so we can either set it
+		// correctly or leave it zero to indicate that we didn't use a checksum
+		udph.checksum(&iph, p)
+
+		err = binary.Write(&dgram, binary.BigEndian, &iph)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error encoding the IP header: %v\n", err)
+			return 0, err
+		}
+		err = binary.Write(&dgram, binary.BigEndian, &udph)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error encoding the UDP header: %v\n", err)
+			return 0, err
+		}
+		err = binary.Write(&dgram, binary.BigEndian, &p)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error encoding the payload: %v\n", err)
+			return 0, err
+		}
+
+		buf := dgram.Bytes()
+
+		// Construct the ethernet frame
+		frame := &ethernet.Frame{
+			Destination: dst_hwaddr,
+			Source:      b.Iface.HardwareAddr,
+			EtherType:   0x0800,
+			Payload:     buf,
+		}
+
+		g, err := frame.MarshalBinary()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 0, err
+		}
+
+		if dst_ip.Equal(net.IPv4bcast) {
+			// Send it.
+			addr := &raw.Addr{HardwareAddr: dst_hwaddr}
+			return b.handle.WriteTo(g, addr)
+		}
 	}
 
 	// Vad som borde göras här är att göra en ARP-förfrågan och
