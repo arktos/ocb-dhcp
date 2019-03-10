@@ -10,7 +10,7 @@ import (
 	"os"
 )
 
-func RunDhcpHandler(tracker *DataTracker, intf *net.Interface, listener *conn.BPFListener) error {
+func RunDhcpHandler(tracker *DataTracker, intf *net.Interface, listener *BPFListener) error {
 	var siaddr net.IP
 
 	addrs, err := intf.Addrs()

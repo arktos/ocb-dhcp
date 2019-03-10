@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"github.com/krolaw/dhcp4/conn"
 	"golang.org/x/sys/unix"
 	"gopkg.in/gcfg.v1"
 	"net"
@@ -73,7 +72,7 @@ func main() {
 	// Egentligen är ju lösningen även här att skita i hur FilterListener beter
 	// sig och låta BPFListener ha ett publikt attribut “Iface”. Då lyssnaren
 	// redan skickas vidare som arguement överallt så…
-	listener, err := conn.NewBPFListener(ifi, "whatever")
+	listener, err := NewBPFListener(ifi)
 
 	// Här borde man kunna kasta bort alla privilegier.
 	// Men det kan man inte, för av någon anledning går

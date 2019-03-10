@@ -1,3 +1,5 @@
+// +build openbsd freebsd
+
 package main
 
 import (
