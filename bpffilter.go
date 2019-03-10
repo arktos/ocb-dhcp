@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/mdlayher/arp"
+	"github.com/krolaw/dhcp4"
 	"github.com/mdlayher/ethernet"
 	"github.com/mdlayher/raw"
 	"golang.org/x/net/ipv4"
@@ -120,12 +120,12 @@ func checksum(buf []byte) uint16 {
 type BPFListener struct {
 	// This struct tries to mask that a socket bound to INADDR_ANY can't broadcast
 	// on a specific interface.
-	Iface   *net.Interface
-	iface   *net.Interface
-	conn    *ipv4.PacketConn
-	cm      *ipv4.ControlMessage
-	handle  *raw.Conn
-	arpconn *arp.Client
+	Iface  *net.Interface
+	iface  *net.Interface
+	sip    net.IP
+	conn   *ipv4.PacketConn
+	cm     *ipv4.ControlMessage
+	handle *raw.Conn
 }
 
 // Implement type serveConn interface {}
@@ -156,11 +156,9 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	// IP is simple, all zeroes.
 	// The second case is trickier. First we need to find out the recipient's
 	// IP. Since we have the clients hardware adress in the chaddr field of
-	// the DHCP packet, this would most easily be done via ARP. The second is
-	// trickier. We need somehow to get the source IP of the server. As to how,
-	// I do not know…
-	//
-	// Both types of replies consists of an IP packet.
+	// the DHCP packet, this is easily done. As for the sending IP, I don't
+	// know.
+	// Anyhow, both types of replies consists of an IP packet.
 	iph = IPHeader{
 		vhl:   0x45,
 		tos:   0,
@@ -171,7 +169,22 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	}
 
 	if dst_ip.Equal(net.IPv4bcast) {
+		copy(iph.src[:], net.IPv4zero.To4())
+		copy(iph.dst[:], net.IPv4bcast.To4())
+
 		dst_hwaddr = ethernet.Broadcast
+	} else {
+		pp := dhcp4.Packet(p)
+		dst_addr, _, _ := net.SplitHostPort(addr.String())
+		dst_ip := net.ParseIP(dst_addr)
+		copy(iph.src[:], b.sip.To4())
+		copy(iph.dst[:], dst_ip.To4())
+
+		dst_hwaddr = pp.CHAddr() // Is this a bad hack?
+	}
+
+	if dst_ip.Equal(net.IPv4bcast) {
+
 		copy(iph.src[:], net.IPv4zero.To4())
 		copy(iph.dst[:], net.IPv4bcast.To4())
 		// Length and checksum are calculated later.
@@ -238,13 +251,6 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 
 		// fmt.Fprintf(os.Stdout, "%s\n", dst_ip.String())
 		// copy(iph.dst[:], dst_ip.To4())
-		//
-		// // haddr_ := packet.CHAddr()
-		// haddr, err := b.arpconn.Resolve(dst_ip)
-		// if err != nil {
-		//     fmt.Fprintln(os.Stderr, "ARP failure.")
-		//     // return 0, nil
-		// }
 		// fmt.Fprintln(os.Stdout, haddr)
 		// dst_hwaddr = haddr
 		// Find out some way to set the source IP
@@ -265,6 +271,10 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 		fmt.Fprintf(os.Stderr, "No interface %s on this host", interfaceName)
 		os.Exit(1)
 	}
+
+	// Not the most elegant way of doing things :(
+	addrs, _ := ifi.Addrs() //[]Addr
+	sip := net.ParseIP(addrs[0].String())
 
 	// Open the device raw device for IP over ethernet
 	config := &raw.Config{} // Ignored but needed on BSD
@@ -288,14 +298,7 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 		return nil, err
 	}
 
-	// Set up an ARP-listener
-	a, err := arp.Dial(ifi)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return nil, err
-	}
-
-	return &BPFListener{Iface: ifi, handle: h, conn: p, iface: ifi, arpconn: a}, nil
+	return &BPFListener{Iface: ifi, handle: h, conn: p, iface: ifi, sip: sip}, nil
 	// return &BPFListener{Iface: ifi, handle: h, conn: p, iface: ifi}, nil
 
 }
