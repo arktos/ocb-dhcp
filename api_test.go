@@ -19,12 +19,13 @@ func get_frontend() (*Frontend, http.Handler) {
 	cfg.Network.Port = 6755
 	cfg.Network.Username = "fred"
 	cfg.Network.Password = "rules"
+
 	fs, err := NewFileStore("./database.test.json")
 	if err != nil {
 		log.Panic(err)
 	}
-	the_fe := NewFrontend("", "", cfg, fs)
-	handler := the_fe.RunServer(false)
+	the_fe := NewFrontend("/etc/dhcp-https-cert.pem", "/etc/dhcp-https-cert.pem", cfg, fs)
+	the_fe.RunServer(false)
 	return the_fe, handler
 }
 
@@ -38,8 +39,8 @@ func TestRequestBadAuth(t *testing.T) {
 	req.SetBasicAuth("greg", "drools")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -58,8 +59,8 @@ func TestGetAllSubnets(t *testing.T) {
 	req.SetBasicAuth("fred", "rules")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -80,8 +81,8 @@ func TestGetSubnetMissing(t *testing.T) {
 	req.SetBasicAuth("fred", "rules")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -103,8 +104,8 @@ func TestCreateSubnetBadConvert(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -124,8 +125,8 @@ func TestCreateSubnetBadJson(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -145,8 +146,8 @@ func TestCreateSubnetNoPayload(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -168,8 +169,8 @@ func TestUpdateSubnetNoPayload(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -189,8 +190,8 @@ func TestUpdateSubnetBadConvert(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -210,8 +211,8 @@ func TestUpdateSubnetBadJson(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -231,8 +232,8 @@ func TestUpdateSubnetMissing(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -253,8 +254,8 @@ func TestDeleteSubnetMissing(t *testing.T) {
 	req.SetBasicAuth("fred", "rules")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -276,8 +277,8 @@ func TestPostBindingNoPayload(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -297,8 +298,8 @@ func TestPostBindingBadJson(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -318,8 +319,8 @@ func TestPostBindingSubnetMissing(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -340,8 +341,8 @@ func TestDeleteBindingSubnetMissing(t *testing.T) {
 	req.SetBasicAuth("fred", "rules")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -364,8 +365,8 @@ func TestPutNextServerNoPayload(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -385,8 +386,8 @@ func TestPutNextServerBadJson(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)
@@ -406,8 +407,8 @@ func TestPutNextServerMissingSubnet(t *testing.T) {
 	req.Header.Add("Content-Type", "application/json")
 
 	// Clear all subnets
-	for k := range fe.DhcpInfo.Subnets {
-		delete(fe.DhcpInfo.Subnets, k)
+	for k := range fe.Tracker.Subnets {
+		delete(fe.Tracker.Subnets, k)
 	}
 
 	handler.ServeHTTP(recorder, req)

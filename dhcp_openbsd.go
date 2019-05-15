@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {
+func RunDhcpHandler(tracker *DataTracker, listener *BPFListener, ifname string) error {
 	var siaddr net.IP
 
 	addrs, err := listener.Iface.Addrs()
@@ -31,7 +31,7 @@ func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {
 		break
 	}
 
-	fmt.Fprintln(os.Stdout, "Starting on interface: ", listener.Iface.Name)
+	fmt.Fprintln(os.Stdout, "Starting on interface: ", ifname)
 
 	// serverIP, _, _ := net.ParseCIDR(sip)
 	handler := &DHCPHandler{

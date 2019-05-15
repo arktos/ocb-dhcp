@@ -79,23 +79,25 @@ func NewBinding() *Binding {
  * Structure for the front end with a pointer to the backend
  */
 type Frontend struct {
-	DhcpInfo *DataTracker
+	Tracker  *DataTracker
 	data_dir string
-	cert_pem string
-	key_pem  string
+	certs    *tls.Config
 	cfg      Config
 }
 
-func NewFrontend(cert_pem, key_pem string, cfg Config, store LoadSaver) *Frontend {
+func NewFrontend(cert_pem string, key_pem string, cfg Config, store LoadSaver) *Frontend {
+
+	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
+	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
+
 	fe := &Frontend{
 		data_dir: data_dir,
-		cert_pem: cert_pem,
-		key_pem:  key_pem,
+		certs:    tls_cfg,
 		cfg:      cfg,
-		DhcpInfo: NewDataTracker(store),
+		Tracker:  NewDataTracker(store),
 	}
 
-	fe.DhcpInfo.load_data()
+	fe.Tracker.load_data()
 
 	return fe
 }
@@ -104,7 +106,7 @@ func NewFrontend(cert_pem, key_pem string, cfg Config, store LoadSaver) *Fronten
 func (fe *Frontend) GetAllSubnets(w rest.ResponseWriter, r *rest.Request) {
 	nets := make([]*ApiSubnet, 0)
 
-	for _, s := range fe.DhcpInfo.Subnets {
+	for _, s := range fe.Tracker.Subnets {
 		as := convertSubnetToApiSubnet(s)
 		nets = append(nets, as)
 	}
@@ -116,7 +118,7 @@ func (fe *Frontend) GetAllSubnets(w rest.ResponseWriter, r *rest.Request) {
 func (fe *Frontend) GetSubnet(w rest.ResponseWriter, r *rest.Request) {
 	subnetName := r.PathParam("id")
 
-	subnet := fe.DhcpInfo.Subnets[subnetName]
+	subnet := fe.Tracker.Subnets[subnetName]
 	if subnet == nil {
 		rest.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -144,7 +146,7 @@ func (fe *Frontend) CreateSubnet(w rest.ResponseWriter, r *rest.Request) {
 		return
 	}
 
-	err, code := fe.DhcpInfo.AddSubnet(subnet)
+	err, code := fe.Tracker.AddSubnet(subnet)
 	if err != nil {
 		rest.Error(w, err.Error(), code)
 		return
@@ -174,7 +176,7 @@ func (fe *Frontend) UpdateSubnet(w rest.ResponseWriter, r *rest.Request) {
 		return
 	}
 
-	err, code := fe.DhcpInfo.ReplaceSubnet(subnetName, subnet)
+	err, code := fe.Tracker.ReplaceSubnet(subnetName, subnet)
 	if err != nil {
 		rest.Error(w, err.Error(), code)
 		return
@@ -187,7 +189,7 @@ func (fe *Frontend) UpdateSubnet(w rest.ResponseWriter, r *rest.Request) {
 func (fe *Frontend) DeleteSubnet(w rest.ResponseWriter, r *rest.Request) {
 	subnetName := r.PathParam("id")
 
-	err, code := fe.DhcpInfo.RemoveSubnet(subnetName)
+	err, code := fe.Tracker.RemoveSubnet(subnetName)
 	if err != nil {
 		rest.Error(w, err.Error(), code)
 		return
@@ -210,7 +212,7 @@ func (fe *Frontend) BindSubnet(w rest.ResponseWriter, r *rest.Request) {
 		return
 	}
 
-	err, code := fe.DhcpInfo.AddBinding(subnetName, binding)
+	err, code := fe.Tracker.AddBinding(subnetName, binding)
 	if err != nil {
 		rest.Error(w, err.Error(), code)
 		return
@@ -223,7 +225,7 @@ func (fe *Frontend) UnbindSubnet(w rest.ResponseWriter, r *rest.Request) {
 	subnetName := r.PathParam("id")
 	mac := r.PathParam("mac")
 
-	err, code := fe.DhcpInfo.DeleteBinding(subnetName, mac)
+	err, code := fe.Tracker.DeleteBinding(subnetName, mac)
 	if err != nil {
 		rest.Error(w, err.Error(), code)
 		return
@@ -248,7 +250,7 @@ func (fe *Frontend) NextServer(w rest.ResponseWriter, r *rest.Request) {
 
 	ip := net.ParseIP(r.PathParam("ip"))
 
-	err, code := fe.DhcpInfo.SetNextServer(subnetName, ip, nextServer)
+	err, code := fe.Tracker.SetNextServer(subnetName, ip, nextServer)
 	if err != nil {
 		rest.Error(w, err.Error(), code)
 		return
@@ -267,7 +269,7 @@ func (fe *Frontend) GetChaddr(w rest.ResponseWriter, r *rest.Request) {
 	fmt.Println(chaddr)
 	// Verkar som om ingen annan funktion låser subnätet, kanske inte jag heller
 	// behöver göra det? Jag prövar, det kan ju gå…
-	subnet := fe.DhcpInfo.Subnets[subnetName]
+	subnet := fe.Tracker.Subnets[subnetName]
 	if subnet == nil {
 		rest.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -290,7 +292,7 @@ func (fe *Frontend) GetChaddr(w rest.ResponseWriter, r *rest.Request) {
 	w.WriteJson(*l)
 }
 
-func (fe *Frontend) RunServer(blocking bool, certs *tls.Config) {
+func (fe *Frontend) RunServer(blocking bool) {
 	api := rest.NewApi()
 	api.Use(&rest.AuthBasicMiddleware{
 		Realm: "test zone",
@@ -326,7 +328,7 @@ func (fe *Frontend) RunServer(blocking bool, certs *tls.Config) {
 	server := http.Server{
 		Addr:      connStr,
 		Handler:   api.MakeHandler(),
-		TLSConfig: certs,
+		TLSConfig: fe.certs,
 	}
 
 	defer server.Close()

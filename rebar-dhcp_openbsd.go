@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -46,9 +45,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
-	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
-
 	fe := NewFrontend(cert_pem, key_pem, cfg, fs)
 	listener, err := NewBPFListener(ifi)
 
@@ -69,7 +65,7 @@ func main() {
 	// utan att öppna den var gång. Det ställer till problem
 	// då filen/databasen ägs av root.
 
-	go RunDhcpHandler(fe.DhcpInfo, listener)
+	go RunDhcpHandler(fe.Tracker, listener, ifi)
 
 	// Men här går det även om det känns lite “för sent”…
 	// uid, _ := user.Lookup("nobody")
@@ -87,5 +83,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fe.RunServer(true, tls_cfg)
+	fe.RunServer(true)
 }

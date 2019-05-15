@@ -10,11 +10,57 @@ import (
 	"github.com/krolaw/dhcp4"
 	"github.com/mdlayher/ethernet"
 	"github.com/mdlayher/raw"
+	//	"golang.org/x/net/bpf"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
 )
+
+//bpf.Assemble([]bpf.Instruction{	// Load "EtherType" field from the ethernet header.
+// 	bpf.LoadAbsolute{Off: 12, Size: 2},
+// Skip over the next instruction if EtherType is not IP.
+//	bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: 0x0800, SkipTrue: 1},
+// Jump again if it's not an UDP packet.
+//    bpf.LoadAbsolute{Off: 23, Size: 4}
+//	bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: unix.IPPROTO_UDP, SkipTrue: 1},
+
+// Verdict is "send up to 4k of the packet to userspace."
+// 	bpf.RetConstant{Val: 4096},
+// Verdict is "ignore packet."
+// 	bpf.RetConstant{Val: 0},
+//})
+
+// /* Make sure this is an IP packet... */
+// BPF_STMT(BPF_LD + BPF_H + BPF_ABS, 12), // Load BPF half-word (BPF_H, 2 bytes) at absolute offset 12 into the accumulator
+// Jump zero steps if accumulator value is ETHERTYPE_IP, otherwise jump eight steps
+// BPF_JMP + BPF_JEQ + BPF_K, ETHERTYPE_IP, 0, 8
+//
+// /* Make sure it's a UDP packet... */
+// BPF_LD + BPF_B + BPF_ABS, 23 // Load the byte at absolute offset 23 into the accumulator.
+// If accumulator equals IPPROTO_UDP do not jump, otherwise jump six steps.
+// BPF_JMP + BPF_JEQ + BPF_K, IPPROTO_UDP, 0, 6
+//
+// /* Make sure this isn't a fragment... */
+// BPF_LD + BPF_H + BPF_ABS, 20 // The pattern here is obvious, load the half-word at offset 20.
+// What does this do?
+// BPF_JMP + BPF_JSET + BPF_K, 0x1fff, 4, 0,
+//
+// /* Get the IP header length... */
+// BPF_LDX + BPF_B + BPF_MSH, 14,
+//
+// /* Make sure it's to the right port... */
+// Load the half-word at the offset given by the BPF index register and then something
+// BPF_LD + BPF_H + BPF_IND, 16
+// Jump to the end of the program if the value isn't 67.
+// BPF_JMP + BPF_JEQ + BPF_K, SERVER_PORT, 0, 1
+//
+// /* If we passed all the tests, ask for the whole packet. */
+// Return a constant value of bytes, (u_int)-1
+// BPF_RET+BPF_K, (u_int)-1
+//
+// /* Otherwise, drop it. */
+// BPF_RET+BPF_K, 0
 
 type IPHeader struct {
 	vhl   uint8
@@ -121,11 +167,27 @@ type BPFListener struct {
 	// This struct tries to mask that a socket bound to INADDR_ANY can't broadcast
 	// on a specific interface.
 	Iface  *net.Interface
-	iface  *net.Interface
 	sip    net.IP
 	conn   *ipv4.PacketConn
 	cm     *ipv4.ControlMessage
 	handle *raw.Conn
+}
+
+// func (b *BPFListener) ReadRaw(p []byte) (n int, addr net.Addr, err error) {
+func (b *BPFListener) ReadRaw(p []byte) (frame ethernet.Frame, err error) {
+
+	var f ethernet.Frame
+	data := make([]byte, b.Iface.MTU)
+	size, _, _ := b.handle.ReadFrom(data)
+	if err != nil {
+		fmt.Println(err)
+		return f, err
+	}
+	err = f.UnmarshalBinary(data[:size])
+	if err != nil {
+		return f, err
+	}
+	return f, nil
 }
 
 // Implement type serveConn interface {}
@@ -146,7 +208,6 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	dst_ip := net.ParseIP(ipStr)
 	var dgram bytes.Buffer
 	var dst_hwaddr net.HardwareAddr
-	var iph IPHeader
 
 	// The reply can be sent in two different ways:
 	// 1. As an IP broadcast.
@@ -159,7 +220,7 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	// the DHCP packet, this is easily done. As for the sending IP, I don't
 	// know.
 	// Anyhow, both types of replies consists of an IP packet.
-	iph = IPHeader{
+	iph := IPHeader{
 		vhl:   0x45,
 		tos:   0,
 		id:    0x1234, // the kernel overwrites id if it is zero
@@ -183,80 +244,66 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		dst_hwaddr = pp.CHAddr() // Is this a bad hack?
 	}
 
-	if dst_ip.Equal(net.IPv4bcast) {
+	// datagram, err := NewUDPDatagram(67, 68, p)
+	// if err != nil {
+	//     fmt.Fprintf(os.Stderr, err)
+	//     return 0, err
+	// }
 
-		copy(iph.src[:], net.IPv4zero.To4())
-		copy(iph.dst[:], net.IPv4bcast.To4())
-		// Length and checksum are calculated later.
+	udph := UDPHeader{
+		src:  uint16(67),
+		dst:  uint16(68),
+		ulen: uint16(8 + len(p)),
+	}
+	// The checksum needs some field from the IP header,
+	// so wait to calculate the checksum.
 
-		udph := UDPHeader{
-			src:  uint16(67),
-			dst:  uint16(68),
-			ulen: uint16(8 + len(p)),
-		}
-		// The checksum needs some field from the IP header,
-		// so wait to calculate the checksum.
+	totalLen := 20 + udph.ulen
+	if totalLen > 0xffff {
+		fmt.Fprintf(os.Stderr, "Message is too large to fit into a single datagram: %v > %v\n", totalLen, 0xffff)
+		return 0, err
+	}
 
-		totalLen := 20 + udph.ulen
-		if totalLen > 0xffff {
-			fmt.Fprintf(os.Stderr, "Message is too large to fit into a single datagram: %v > %v\n", totalLen, 0xffff)
-			return 0, err
-		}
+	iph.iplen = uint16(totalLen)
+	iph.checksum()
 
-		iph.iplen = uint16(totalLen)
-		iph.checksum()
+	// the kernel doesn't touch the UDP checksum, so we can either set it
+	// correctly or leave it zero to indicate that we didn't use a checksum
+	udph.checksum(&iph, p)
 
-		// the kernel doesn't touch the UDP checksum, so we can either set it
-		// correctly or leave it zero to indicate that we didn't use a checksum
-		udph.checksum(&iph, p)
+	packet_data := []interface{}{
+		&iph,
+		&udph,
+		&p,
+	}
 
-		err = binary.Write(&dgram, binary.BigEndian, &iph)
+	for v, _ := range packet_data {
+		err = binary.Write(&dgram, binary.BigEndian, v)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error encoding the IP header: %v\n", err)
 			return 0, err
 		}
-		err = binary.Write(&dgram, binary.BigEndian, &udph)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error encoding the UDP header: %v\n", err)
-			return 0, err
-		}
-		err = binary.Write(&dgram, binary.BigEndian, &p)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error encoding the payload: %v\n", err)
-			return 0, err
-		}
-
-		buf := dgram.Bytes()
-
-		// Construct the ethernet frame
-		frame := &ethernet.Frame{
-			Destination: dst_hwaddr,
-			Source:      b.Iface.HardwareAddr,
-			EtherType:   0x0800,
-			Payload:     buf,
-		}
-
-		g, err := frame.MarshalBinary()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 0, err
-		}
-
-		// Send it.
-		addr := &raw.Addr{HardwareAddr: dst_hwaddr}
-		return b.handle.WriteTo(g, addr)
-	} else {
-		// Vad som borde göras här är att göra en ARP-förfrågan och
-		// konstruera ett ethernet-paket enligt ovan.
-
-		// fmt.Fprintf(os.Stdout, "%s\n", dst_ip.String())
-		// copy(iph.dst[:], dst_ip.To4())
-		// fmt.Fprintln(os.Stdout, haddr)
-		// dst_hwaddr = haddr
-		// Find out some way to set the source IP
-		fmt.Fprintln(os.Stdout, "This should be run.")
-		return b.conn.WriteTo(p, b.cm, addr)
 	}
+
+	buf := dgram.Bytes()
+
+	// Construct the ethernet frame
+	frame := &ethernet.Frame{
+		Destination: dst_hwaddr,
+		Source:      b.Iface.HardwareAddr,
+		EtherType:   0x0800,
+		Payload:     buf,
+	}
+
+	g, err := frame.MarshalBinary()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 0, err
+	}
+
+	// Send it.
+	dst_addr := &raw.Addr{HardwareAddr: dst_hwaddr}
+	return b.handle.WriteTo(g, dst_addr)
 }
 
 func (b *BPFListener) Close() error {
@@ -280,7 +327,7 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 	config := &raw.Config{} // Ignored but needed on BSD
 	h, err := raw.ListenPacket(ifi, 0x0800, config)
 	if err != nil {
-		// defer h.Close()
+		defer h.Close()
 		fmt.Fprintln(os.Stderr, err)
 		return nil, err
 	}
@@ -288,7 +335,7 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 	// Then set up a normal packet listener.
 	l, err := net.ListenPacket("udp4", ":67")
 	if err != nil {
-		// defer l.Close()
+		defer l.Close()
 		fmt.Fprintln(os.Stderr, err)
 		return nil, err
 	}
@@ -298,7 +345,6 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 		return nil, err
 	}
 
-	return &BPFListener{Iface: ifi, handle: h, conn: p, iface: ifi, sip: sip}, nil
-	// return &BPFListener{Iface: ifi, handle: h, conn: p, iface: ifi}, nil
+	return &BPFListener{Iface: ifi, handle: h, conn: p, sip: sip}, nil
 
 }

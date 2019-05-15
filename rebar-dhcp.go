@@ -3,7 +3,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -62,8 +61,6 @@ func main() {
 	// privilegier efter denna rad.
 	// Anropskedjan som är intressant ser ut som:
 	// StartDhcpHandlers() -> RunDHCPHandler() -> NewBPFListener()
-	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
-	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
 
 	fe := NewFrontend(cert_pem, key_pem, cfg, fs)
 
@@ -78,7 +75,7 @@ func main() {
 	// Men det kan man inte, för av någon anledning går
 	// det inte att spara data då…
 
-	go RunDhcpHandler(fe.DhcpInfo, iface, listener)
+	go RunDhcpHandler(fe.Tracker, iface, listener)
 
 	// Men här går det även om det känns lite “för sent”…
 	uid, _ := user.Lookup("nobody")
@@ -96,5 +93,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fe.RunServer(true, tls_cfg)
+	fe.RunServer(true)
 }
