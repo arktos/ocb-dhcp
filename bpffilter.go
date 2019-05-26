@@ -7,60 +7,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/arktos/raw"
 	"github.com/krolaw/dhcp4"
 	"github.com/mdlayher/ethernet"
-	"github.com/mdlayher/raw"
-	//	"golang.org/x/net/bpf"
+	"golang.org/x/net/bpf"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
 )
-
-//bpf.Assemble([]bpf.Instruction{	// Load "EtherType" field from the ethernet header.
-// 	bpf.LoadAbsolute{Off: 12, Size: 2},
-// Skip over the next instruction if EtherType is not IP.
-//	bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: 0x0800, SkipTrue: 1},
-// Jump again if it's not an UDP packet.
-//    bpf.LoadAbsolute{Off: 23, Size: 4}
-//	bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: unix.IPPROTO_UDP, SkipTrue: 1},
-
-// Verdict is "send up to 4k of the packet to userspace."
-// 	bpf.RetConstant{Val: 4096},
-// Verdict is "ignore packet."
-// 	bpf.RetConstant{Val: 0},
-//})
-
-// /* Make sure this is an IP packet... */
-// BPF_STMT(BPF_LD + BPF_H + BPF_ABS, 12), // Load BPF half-word (BPF_H, 2 bytes) at absolute offset 12 into the accumulator
-// Jump zero steps if accumulator value is ETHERTYPE_IP, otherwise jump eight steps
-// BPF_JMP + BPF_JEQ + BPF_K, ETHERTYPE_IP, 0, 8
-//
-// /* Make sure it's a UDP packet... */
-// BPF_LD + BPF_B + BPF_ABS, 23 // Load the byte at absolute offset 23 into the accumulator.
-// If accumulator equals IPPROTO_UDP do not jump, otherwise jump six steps.
-// BPF_JMP + BPF_JEQ + BPF_K, IPPROTO_UDP, 0, 6
-//
-// /* Make sure this isn't a fragment... */
-// BPF_LD + BPF_H + BPF_ABS, 20 // The pattern here is obvious, load the half-word at offset 20.
-// What does this do?
-// BPF_JMP + BPF_JSET + BPF_K, 0x1fff, 4, 0,
-//
-// /* Get the IP header length... */
-// BPF_LDX + BPF_B + BPF_MSH, 14,
-//
-// /* Make sure it's to the right port... */
-// Load the half-word at the offset given by the BPF index register and then something
-// BPF_LD + BPF_H + BPF_IND, 16
-// Jump to the end of the program if the value isn't 67.
-// BPF_JMP + BPF_JEQ + BPF_K, SERVER_PORT, 0, 1
-//
-// /* If we passed all the tests, ask for the whole packet. */
-// Return a constant value of bytes, (u_int)-1
-// BPF_RET+BPF_K, (u_int)-1
-//
-// /* Otherwise, drop it. */
-// BPF_RET+BPF_K, 0
 
 type IPHeader struct {
 	vhl   uint8
@@ -244,12 +199,6 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		dst_hwaddr = pp.CHAddr() // Is this a bad hack?
 	}
 
-	// datagram, err := NewUDPDatagram(67, 68, p)
-	// if err != nil {
-	//     fmt.Fprintf(os.Stderr, err)
-	//     return 0, err
-	// }
-
 	udph := UDPHeader{
 		src:  uint16(67),
 		dst:  uint16(68),
@@ -316,6 +265,7 @@ func (b *BPFListener) Close() error {
 }
 
 func NewBPFListener(interfaceName string) (*BPFListener, error) {
+	var filter []bpf.RawInstruction
 
 	ifi, err := net.InterfaceByName(interfaceName) // Interface index
 	if err != nil {
@@ -335,6 +285,48 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, err
 	}
+
+	// This BPF program is ported from the one in the OpenBSD DHCPd as are
+	// most of the comments. The first load and jump is not strictly necessary
+	// when used in conjunction with github.com/mdlayher/raw, raw.ListenPacket
+	// filter the frames by itself.
+	filter, err = bpf.Assemble([]bpf.Instruction{
+		bpf.LoadAbsolute{Off: 12, Size: 2},
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: 0x0800, SkipFalse: 8},
+		// Make sure it's a UDP packet...
+		// Load the byte at absolute offset 23 into the accumulator.
+		// If accumulator equals IPPROTO_UDP do not jump, otherwise jump six steps.
+		bpf.LoadAbsolute{Off: 23, Size: 1},
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.IPPROTO_UDP, SkipFalse: 6},
+		// Make sure this isn't a fragment...
+		// The pattern here is obvious, load the half-word at offset 20.
+		bpf.LoadAbsolute{Off: 20, Size: 2},
+		// What does this do?
+		// From https://www.tcpdump.org/papers/bpf-usenix93.pdf
+		// (jset performs a “bitwise and” — useful for conditional bit tests)
+		// If 0x1fff and whatever is in the halfword at offset 20 results in
+		// zero, jump 4 steps, otherwise continue with the next instruction.
+		bpf.JumpIf{Cond: bpf.JumpBitsNotSet, Val: 0x1fff, SkipFalse: 4},
+		// Get the IP header length...
+		bpf.LoadMemShift{Off: 14},
+		// Make sure it's to the right port...
+		// Load the half-word at the offset given by the BPF index register and then something
+		bpf.LoadIndirect{Off: 16, Size: 2},
+		// Jump to the end of the program if the value isn't 67.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: 0x43, SkipFalse: 1},
+		// Send the packet to userspace
+		bpf.RetConstant{Val: 2048},
+		// Verdict is "ignore packet."
+		bpf.RetConstant{Val: 0},
+	})
+
+	if err != nil {
+		defer h.Close()
+		fmt.Fprintln(os.Stderr, err)
+		return nil, err
+	}
+
+	h.SetBPF(filter)
 
 	// Then set up a normal packet listener.
 	l, err := net.ListenPacket("udp4", ":67")
