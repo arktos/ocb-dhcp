@@ -8,13 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/arktos/raw"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/krolaw/dhcp4"
 	"github.com/mdlayher/ethernet"
 	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
-	"unsafe"
 )
 
 type IPHeader struct {
@@ -131,42 +132,32 @@ type BPFListener struct {
 
 // Implement type serveConn interface {}
 func (b *BPFListener) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	var f ethernet.Frame
-	// var src_addr *net.UDPAddr
+	var src_addr net.UDPAddr
 	buf := make([]byte, b.Iface.MTU)
-	n, addr, err = b.handle.ReadFrom(buf)
-	// buf should now contain an ethernet frame.
+	n, addr, err = b.handle.ReadFrom(buf) // buf should now contain an ethernet frame.
 
-	if err = (&f).UnmarshalBinary(buf); err != nil {
-		fmt.Printf("failed to unmarshal ethernet frame: %v\n", err)
+	packet := gopacket.NewPacket(buf, layers.LayerTypeEthernet, gopacket.Default)
+
+	iplayer := packet.Layer(layers.LayerTypeIPv4)
+
+	if iplayer != nil {
+		ip, _ := iplayer.(*layers.IPv4)
+		src_addr.IP = ip.SrcIP
+	} else {
+		fmt.Println("Couldn't decode packet")
+		return 0, &src_addr, err
 	}
 
-	// En ethernet-header är 18 bytes.
-	// En IPv4-header är 20 bytes
-	// En UDP-header är 8 bytes.
-	// Men det där första är ju ointressant då vi kan få ut datan som f.Payload()
-
-	// Jag behöver tillgång till värden från både UDP-
-	// och IP-etiketten. Smidigaste sättet är väl att
-	// bara att “kasta” dem till rätt värden.
-	iph := *(*IPHeader)(unsafe.Pointer(&f.Payload[0]))
-	udph := *(*UDPDatagram)(unsafe.Pointer(&f.Payload[20]))
-
-	fmt.Printf("UDP payload is %d bytes\n", udph.packetLength)
-
-	// copy(src_addr.IP, iph.src[:])
-	// src_addr.Port = 68
-	src_addr := net.UDPAddr{Port: 68, IP: iph.src[:]}
-
-	// Att ta reda på längden på datan genom att kika i
-	// UDP-etiketten var ingen bra idé. Värdena i etiketten
-	// är ju BigEndian :(
-	dhcpp := f.Payload[28:]
-	copy(p, dhcpp)
-
-	// Egentligen är det fel att returnera f.Source. Adressen som
-	// efterfrågas av anroparen är snarare ett IPv4.
-	return len(p), &src_addr, err
+	udplayer := packet.Layer(layers.LayerTypeUDP)
+	if udplayer != nil {
+		udpp, _ := udplayer.(*layers.UDP)
+		src_addr.Port = int(udpp.SrcPort)
+		copy(p, udpp.Payload)
+		return len(p), &src_addr, nil
+	} else {
+		fmt.Println("Couldn't decode packet")
+		return 0, &src_addr, err
+	}
 }
 
 func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
