@@ -11,10 +11,10 @@ import (
 	"github.com/krolaw/dhcp4"
 	"github.com/mdlayher/ethernet"
 	"golang.org/x/net/bpf"
-	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
+	"unsafe"
 )
 
 type IPHeader struct {
@@ -38,6 +38,9 @@ func (h *IPHeader) checksum() {
 }
 
 type UDPHeader struct {
+	// None of these fields are really uint16. uint16
+	// has the byte order of the host, but these bytes
+	// encodes big endian integers.
 	src  uint16
 	dst  uint16
 	ulen uint16
@@ -123,39 +126,47 @@ type BPFListener struct {
 	// on a specific interface.
 	Iface  *net.Interface
 	sip    net.IP
-	conn   *ipv4.PacketConn
-	cm     *ipv4.ControlMessage
 	handle *raw.Conn
-}
-
-// func (b *BPFListener) ReadRaw(p []byte) (n int, addr net.Addr, err error) {
-func (b *BPFListener) ReadRaw(p []byte) (frame ethernet.Frame, err error) {
-
-	var f ethernet.Frame
-	data := make([]byte, b.Iface.MTU)
-	size, _, _ := b.handle.ReadFrom(data)
-	if err != nil {
-		fmt.Println(err)
-		return f, err
-	}
-	err = f.UnmarshalBinary(data[:size])
-	if err != nil {
-		return f, err
-	}
-	return f, nil
 }
 
 // Implement type serveConn interface {}
 func (b *BPFListener) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	for { // Filter all other interfaces
-		n, b.cm, addr, err = b.conn.ReadFrom(p)
-		if err != nil || b.cm == nil || b.cm.IfIndex == b.Iface.Index {
-			break
-		} else {
-			fmt.Fprintf(os.Stdout, "Hrmm…")
-		}
+	var f ethernet.Frame
+	// var src_addr *net.UDPAddr
+	buf := make([]byte, b.Iface.MTU)
+	n, addr, err = b.handle.ReadFrom(buf)
+	// buf should now contain an ethernet frame.
+
+	if err = (&f).UnmarshalBinary(buf); err != nil {
+		fmt.Printf("failed to unmarshal ethernet frame: %v\n", err)
 	}
-	return
+
+	// En ethernet-header är 18 bytes.
+	// En IPv4-header är 20 bytes
+	// En UDP-header är 8 bytes.
+	// Men det där första är ju ointressant då vi kan få ut datan som f.Payload()
+
+	// Jag behöver tillgång till värden från både UDP-
+	// och IP-etiketten. Smidigaste sättet är väl att
+	// bara att “kasta” dem till rätt värden.
+	iph := *(*IPHeader)(unsafe.Pointer(&f.Payload[0]))
+	udph := *(*UDPDatagram)(unsafe.Pointer(&f.Payload[20]))
+
+	fmt.Printf("UDP payload is %d bytes\n", udph.packetLength)
+
+	// copy(src_addr.IP, iph.src[:])
+	// src_addr.Port = 68
+	src_addr := net.UDPAddr{Port: 68, IP: iph.src[:]}
+
+	// Att ta reda på längden på datan genom att kika i
+	// UDP-etiketten var ingen bra idé. Värdena i etiketten
+	// är ju BigEndian :(
+	dhcpp := f.Payload[28:]
+	copy(p, dhcpp)
+
+	// Egentligen är det fel att returnera f.Source. Adressen som
+	// efterfrågas av anroparen är snarare ett IPv4.
+	return len(p), &src_addr, err
 }
 
 func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
@@ -255,8 +266,7 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	}
 
 	// Send it.
-	dst_addr := &raw.Addr{HardwareAddr: dst_hwaddr}
-	return b.handle.WriteTo(g, dst_addr)
+	return b.handle.WriteTo(g, &raw.Addr{})
 }
 
 func (b *BPFListener) Close() error {
@@ -328,19 +338,6 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 
 	h.SetBPF(filter)
 
-	// Then set up a normal packet listener.
-	l, err := net.ListenPacket("udp4", ":67")
-	if err != nil {
-		defer l.Close()
-		fmt.Fprintln(os.Stderr, err)
-		return nil, err
-	}
-
-	p := ipv4.NewPacketConn(l)
-	if err := p.SetControlMessage(ipv4.FlagInterface, true); err != nil {
-		return nil, err
-	}
-
-	return &BPFListener{Iface: ifi, handle: h, conn: p, sip: sip}, nil
+	return &BPFListener{Iface: ifi, handle: h, sip: sip}, nil
 
 }
