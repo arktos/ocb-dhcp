@@ -3,124 +3,16 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"github.com/arktos/raw"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/krolaw/dhcp4"
-	"github.com/mdlayher/ethernet"
 	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
 )
-
-type IPHeader struct {
-	vhl   uint8
-	tos   uint8
-	iplen uint16
-	id    uint16
-	off   uint16
-	ttl   uint8
-	proto uint8
-	csum  uint16
-	src   [4]byte
-	dst   [4]byte
-}
-
-func (h *IPHeader) checksum() {
-	h.csum = 0
-	var b bytes.Buffer
-	binary.Write(&b, binary.BigEndian, h)
-	h.csum = checksum(b.Bytes())
-}
-
-type UDPHeader struct {
-	// None of these fields are really uint16. uint16
-	// has the byte order of the host, but these bytes
-	// encodes big endian integers.
-	src  uint16
-	dst  uint16
-	ulen uint16
-	csum uint16
-}
-
-func (u *UDPHeader) checksum(ip *IPHeader, payload []byte) {
-	u.csum = 0
-	phdr := pseudohdr{
-		ipsrc:   ip.src,
-		ipdst:   ip.dst,
-		zero:    0,
-		ipproto: ip.proto,
-		plen:    u.ulen,
-	}
-	var b bytes.Buffer
-	binary.Write(&b, binary.BigEndian, &phdr)
-	binary.Write(&b, binary.BigEndian, u)
-	binary.Write(&b, binary.BigEndian, &payload)
-	u.csum = checksum(b.Bytes())
-}
-
-// pseudo header used for checksum calculation
-type pseudohdr struct {
-	ipsrc   [4]byte
-	ipdst   [4]byte
-	zero    uint8
-	ipproto uint8
-	plen    uint16
-}
-
-type UDPDatagram struct {
-	srcPort      uint16
-	dstPort      uint16
-	packetLength uint16
-	csum         uint16
-	data         *[]byte
-}
-
-func NewUDPDatagram(src, dst int, data []byte) (UDPDatagram, error) {
-	u := UDPDatagram{}
-	l := len(data)
-	if l > 65507 {
-		e := errors.New("The data is too large to fit into a single UDPDatagram.")
-		return u, e
-	}
-
-	u.srcPort = uint16(src)
-	u.dstPort = uint16(dst)
-	u.packetLength = uint16(l + 8)
-	u.data = &data
-	return u, nil
-}
-
-func checksum(buf []byte) uint16 {
-	sum := uint32(0)
-
-	for ; len(buf) >= 2; buf = buf[2:] {
-		sum += uint32(buf[0])<<8 | uint32(buf[1])
-	}
-	if len(buf) > 0 {
-		sum += uint32(buf[0]) << 8
-	}
-	for sum > 0xffff {
-		sum = (sum >> 16) + (sum & 0xffff)
-	}
-	csum := ^uint16(sum)
-	/*
-	 * From RFC 768:
-	 * If the computed checksum is zero, it is transmitted as all ones (the
-	 * equivalent in one's complement arithmetic). An all zero transmitted
-	 * checksum value means that the transmitter generated no checksum (for
-	 * debugging or for higher level protocols that don't care).
-	 */
-	if csum == 0 {
-		csum = 0xffff
-	}
-	return csum
-}
 
 type BPFListener struct {
 	// This struct tries to mask that a socket bound to INADDR_ANY can't broadcast
@@ -153,18 +45,29 @@ func (b *BPFListener) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		udpp, _ := udplayer.(*layers.UDP)
 		src_addr.Port = int(udpp.SrcPort)
 		copy(p, udpp.Payload)
-		return len(p), &src_addr, nil
 	} else {
 		fmt.Println("Couldn't decode packet")
 		return 0, &src_addr, err
 	}
+	return len(p), &src_addr, nil
 }
 
 func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	ipStr, _, err := net.SplitHostPort(addr.String())
 	dst_ip := net.ParseIP(ipStr)
-	var dgram bytes.Buffer
 	var dst_hwaddr net.HardwareAddr
+	var iplayer *layers.IPv4
+
+	iplayer = &layers.IPv4{
+		Version:    4,   // uint8
+		IHL:        5,   // uint8
+		TOS:        0,   // uint8
+		Id:         0,   // uint16
+		Flags:      0,   // IPv4Flag
+		FragOffset: 0,   // uint16
+		TTL:        255, // uint8
+		Protocol:   17,  // IPProtocol UDP(17)
+	}
 
 	// The reply can be sent in two different ways:
 	// 1. As an IP broadcast.
@@ -177,87 +80,33 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	// the DHCP packet, this is easily done. As for the sending IP, I don't
 	// know.
 	// Anyhow, both types of replies consists of an IP packet.
-	iph := IPHeader{
-		vhl:   0x45,
-		tos:   0,
-		id:    0x1234, // the kernel overwrites id if it is zero
-		off:   0,
-		ttl:   64,
-		proto: unix.IPPROTO_UDP,
-	}
 
 	if dst_ip.Equal(net.IPv4bcast) {
-		copy(iph.src[:], net.IPv4zero.To4())
-		copy(iph.dst[:], net.IPv4bcast.To4())
-
-		dst_hwaddr = ethernet.Broadcast
+		iplayer.SrcIP = net.IPv4zero
+		iplayer.DstIP = net.IPv4bcast
+		dst_hwaddr = layers.EthernetBroadcast
 	} else {
 		pp := dhcp4.Packet(p)
 		dst_addr, _, _ := net.SplitHostPort(addr.String())
-		dst_ip := net.ParseIP(dst_addr)
-		copy(iph.src[:], b.sip.To4())
-		copy(iph.dst[:], dst_ip.To4())
-
+		iplayer.SrcIP = b.sip
+		iplayer.DstIP = net.ParseIP(dst_addr)
 		dst_hwaddr = pp.CHAddr() // Is this a bad hack?
 	}
 
-	udph := UDPHeader{
-		src:  uint16(67),
-		dst:  uint16(68),
-		ulen: uint16(8 + len(p)),
-	}
-	// The checksum needs some field from the IP header,
-	// so wait to calculate the checksum.
+	udplayer := &layers.UDP{SrcPort: 67, DstPort: 68}
+	udplayer.SetNetworkLayerForChecksum(iplayer)
 
-	totalLen := 20 + udph.ulen
-	if totalLen > 0xffff {
-		fmt.Fprintf(os.Stderr, "Message is too large to fit into a single datagram: %v > %v\n", totalLen, 0xffff)
-		return 0, err
-	}
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 
-	iph.iplen = uint16(totalLen)
-	iph.checksum()
-
-	// the kernel doesn't touch the UDP checksum, so we can either set it
-	// correctly or leave it zero to indicate that we didn't use a checksum
-	udph.checksum(&iph, p)
-
-	err = binary.Write(&dgram, binary.BigEndian, &iph)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding the IP header: %v\n", err)
-		return 0, err
-	}
-
-	err = binary.Write(&dgram, binary.BigEndian, &udph)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding the UDP header: %v\n", err)
-		return 0, err
-	}
-
-	err = binary.Write(&dgram, binary.BigEndian, &p)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding the payload: %v\n", err)
-		return 0, err
-	}
-
-	buf := dgram.Bytes()
-
-	// Construct the ethernet frame
-	frame := &ethernet.Frame{
-		Destination: dst_hwaddr,
-		Source:      b.Iface.HardwareAddr,
-		EtherType:   0x0800,
-		Payload:     buf,
-	}
-
-	g, err := frame.MarshalBinary()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 0, err
-	}
+	gopacket.SerializeLayers(buf, opts,
+		&layers.Ethernet{SrcMAC: b.Iface.HardwareAddr, DstMAC: dst_hwaddr, EthernetType: 0x800},
+		iplayer,
+		udplayer,
+		gopacket.Payload(p))
 
 	// Send it.
-	return b.handle.WriteTo(g, &raw.Addr{})
+	return b.handle.WriteTo(buf.Bytes(), &raw.Addr{})
 }
 
 func (b *BPFListener) Close() error {
