@@ -85,17 +85,13 @@ type Frontend struct {
 	cfg      Config
 }
 
-func NewFrontend(certs *tls.Config, cfg Config, store LoadSaver) *Frontend {
-
+func NewFrontend(certs *tls.Config, cfg Config, store *DataTracker) *Frontend {
 	fe := &Frontend{
 		data_dir: data_dir,
 		certs:    certs,
 		cfg:      cfg,
-		Tracker:  NewDataTracker(store),
+		Tracker:  store,
 	}
-
-	fe.Tracker.load_data()
-
 	return fe
 }
 

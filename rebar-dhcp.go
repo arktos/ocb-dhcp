@@ -50,10 +50,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	tracker := NewDataTracker(fs)
+	tracker.load_data()
+
 	iface, err := net.InterfaceByName(ifi)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "No interface by that name.")
 	}
+
+	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
+	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
+	fe := NewFrontend(certs, cfg, tracker)
 
 	// Det här är en av två saker som kräver extra privilegier, den andra
 	// är NewBPFListener() som anropas av RunDHCPHandler i dhcp.go. Kunde
@@ -62,22 +69,18 @@ func main() {
 	// Anropskedjan som är intressant ser ut som:
 	// StartDhcpHandlers() -> RunDHCPHandler() -> NewBPFListener()
 
-	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
-	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
-	fe := NewFrontend(certs, cfg, fs)
-
 	// Varför behöver “listener” egentligen namnet på nätverksgränssnittet?
 	// Vi har redan en pekare *iface.
 	// Egentligen är ju lösningen även här att skita i hur FilterListener beter
 	// sig och låta BPFListener ha ett publikt attribut “Iface”. Då lyssnaren
-	// redan skickas vidare som arguement överallt så…
+	// redan skickas vidare som argument överallt så…
 	listener, err := NewBPFListener(ifi)
 
 	// Här borde man kunna kasta bort alla privilegier.
 	// Men det kan man inte, för av någon anledning går
 	// det inte att spara data då…
 
-	go RunDhcpHandler(fe.Tracker, iface, listener)
+	go RunDhcpHandler(tracker, iface, listener)
 
 	// Men här går det även om det känns lite “för sent”…
 	uid, _ := user.Lookup("nobody")

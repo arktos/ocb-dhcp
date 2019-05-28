@@ -52,10 +52,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	tracker := NewDataTracker(fs)
+	tracker.load_data()
+
 	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
 	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
 
-	fe := NewFrontend(tls_cfg, cfg, fs)
+	fe := NewFrontend(tls_cfg, cfg, tracker)
 	listener, err := NewBPFListener(ifi)
 
 	err = unix.Unveil("/var/cache/rebar-dhcp", "rwc")
@@ -75,7 +78,7 @@ func main() {
 	// utan att öppna den var gång. Det ställer till problem
 	// då filen/databasen ägs av root.
 
-	go RunDhcpHandler(fe.Tracker, listener, ifi)
+	go RunDhcpHandler(tracker, listener, ifi)
 
 	// Men här går det även om det känns lite “för sent”…
 	// uid, _ := user.Lookup("nobody")
