@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -30,6 +31,12 @@ func init() {
 }
 
 func main() {
+
+	// err := unix.Pledge("stdio wpath inet unveil", "")
+	// if err != nil {
+	//     fmt.Println("Couldn't pledge, exiting.")
+	//     os.Exit(1)
+	// }
 	flag.Parse()
 
 	var cfg Config
@@ -45,7 +52,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	fe := NewFrontend(cert_pem, key_pem, cfg, fs)
+	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
+	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
+
+	fe := NewFrontend(tls_cfg, cfg, fs)
 	listener, err := NewBPFListener(ifi)
 
 	err = unix.Unveil("/var/cache/rebar-dhcp", "rwc")

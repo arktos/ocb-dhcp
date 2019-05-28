@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -43,7 +44,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, cerr)
 		os.Exit(1)
 	}
-	// unix.Pledge("stdio inet id", "")
 	fs, err := NewFileStore(data_dir + "/database.json")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -62,7 +62,9 @@ func main() {
 	// Anropskedjan som är intressant ser ut som:
 	// StartDhcpHandlers() -> RunDHCPHandler() -> NewBPFListener()
 
-	fe := NewFrontend(cert_pem, key_pem, cfg, fs)
+	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
+	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
+	fe := NewFrontend(certs, cfg, fs)
 
 	// Varför behöver “listener” egentligen namnet på nätverksgränssnittet?
 	// Vi har redan en pekare *iface.

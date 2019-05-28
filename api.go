@@ -85,14 +85,11 @@ type Frontend struct {
 	cfg      Config
 }
 
-func NewFrontend(cert_pem string, key_pem string, cfg Config, store LoadSaver) *Frontend {
-
-	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
-	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
+func NewFrontend(certs *tls.Config, cfg Config, store LoadSaver) *Frontend {
 
 	fe := &Frontend{
 		data_dir: data_dir,
-		certs:    tls_cfg,
+		certs:    certs,
 		cfg:      cfg,
 		Tracker:  NewDataTracker(store),
 	}
