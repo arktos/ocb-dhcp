@@ -1,19 +1,16 @@
-// +build !openbsd
-
 package main
 
 import (
 	"fmt"
 	dhcp "github.com/krolaw/dhcp4"
-	"log"
 	"net"
 	"os"
 )
 
-func RunDhcpHandler(tracker *DataTracker, intf *net.Interface, listener *BPFListener) error {
+func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {
 	var siaddr net.IP
 
-	addrs, err := intf.Addrs()
+	addrs, err := listener.Iface.Addrs()
 	if err != nil {
 		return err
 	}
@@ -34,37 +31,39 @@ func RunDhcpHandler(tracker *DataTracker, intf *net.Interface, listener *BPFList
 		break
 	}
 
-	fmt.Fprintln(os.Stdout, "Starting on interface: ", intf.Name)
+	fmt.Fprintln(os.Stdout, "Starting on interface: ", listener.Iface.Name)
 
 	// serverIP, _, _ := net.ParseCIDR(sip)
 	handler := &DHCPHandler{
 		ip:   siaddr.To4(),
-		intf: *intf,
+		intf: listener.Iface,
 		info: tracker,
 	}
-	log.Fatal(dhcp.Serve(listener, handler))
+	e := dhcp.Serve(listener, handler)
+	if e != nil {
+		fmt.Fprintln(os.Stderr, e)
+		os.Exit(1)
+	}
 	return nil
 }
 
 type DHCPHandler struct {
-	intf net.Interface // Interface processing on.
-	ip   net.IP        // Server IP to use
-	info *DataTracker  // Subnet data
+	info *DataTracker   // Subnet data
+	intf *net.Interface // Interface processing on.
+	ip   net.IP         // Server IP to use
 }
 
 func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) (d dhcp.Packet) {
-
 	// First find the subnet to use. giaddr field to lookup subnet if not all zeros.
 	// If all zeros, use the interfaces Addrs to find a subnet, first wins.
 	var subnet *Subnet
 	subnet = nil
 
 	giaddr := p.GIAddr()
+
 	if !giaddr.Equal(net.IPv4zero) {
-		fmt.Fprintln(os.Stdout, "Received unicast message on ", h.intf.Name)
 		subnet = h.info.FindSubnet(giaddr)
 	} else {
-		fmt.Fprintln(os.Stdout, "Received Broadcast/Local message on ", h.intf.Name)
 		addrs, err := h.intf.Addrs()
 		if err != nil {
 			fmt.Fprintln(os.Stdout, "Can't find addresses for ", h.intf.Name, ": ", err)

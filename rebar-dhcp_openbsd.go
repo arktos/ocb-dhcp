@@ -78,7 +78,7 @@ func main() {
 	// utan att öppna den var gång. Det ställer till problem
 	// då filen/databasen ägs av root.
 
-	go RunDhcpHandler(tracker, listener, ifi)
+	go RunDhcpHandler(tracker, listener)
 
 	// Men här går det även om det känns lite “för sent”…
 	// uid, _ := user.Lookup("nobody")

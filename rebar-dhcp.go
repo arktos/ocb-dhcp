@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"gopkg.in/gcfg.v1"
-	"net"
 	"os"
 	"os/user"
 	"strconv"
@@ -53,14 +52,10 @@ func main() {
 	tracker := NewDataTracker(fs)
 	tracker.load_data()
 
-	iface, err := net.InterfaceByName(ifi)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "No interface by that name.")
-	}
-
 	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
 	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
-	fe := NewFrontend(certs, cfg, tracker)
+
+	fe := NewFrontend(tls_cfg, cfg, tracker)
 
 	// Det här är en av två saker som kräver extra privilegier, den andra
 	// är NewBPFListener() som anropas av RunDHCPHandler i dhcp.go. Kunde
@@ -80,7 +75,7 @@ func main() {
 	// Men det kan man inte, för av någon anledning går
 	// det inte att spara data då…
 
-	go RunDhcpHandler(tracker, iface, listener)
+	go RunDhcpHandler(tracker, listener)
 
 	// Men här går det även om det känns lite “för sent”…
 	uid, _ := user.Lookup("nobody")
