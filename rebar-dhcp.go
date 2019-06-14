@@ -6,11 +6,12 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"golang.org/x/sys/unix"
-	"gopkg.in/gcfg.v1"
 	"os"
 	"os/user"
 	"strconv"
+
+	"golang.org/x/sys/unix"
+	"gopkg.in/gcfg.v1"
 )
 
 type Config struct {

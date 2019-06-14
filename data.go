@@ -2,11 +2,12 @@ package main
 
 import (
 	"errors"
-	dhcp "github.com/krolaw/dhcp4"
 	"log"
 	"net"
 	"net/http"
 	"sync"
+
+	"github.com/krolaw/dhcp4"
 )
 
 type DataTracker struct {
@@ -157,14 +158,14 @@ func (dt *DataTracker) AddBinding(subnetName string, binding Binding) (error, in
 	// If existing, clear the reservation for IP
 	b := lsubnet.Bindings[binding.Mac]
 	if b != nil {
-		if dhcp.IPInRange(lsubnet.ActiveStart, lsubnet.ActiveEnd, b.Ip) {
-			lsubnet.ActiveBits.Clear(uint(dhcp.IPRange(lsubnet.ActiveStart, b.Ip) - 1))
+		if dhcp4.IPInRange(lsubnet.ActiveStart, lsubnet.ActiveEnd, b.Ip) {
+			lsubnet.ActiveBits.Clear(uint(dhcp4.IPRange(lsubnet.ActiveStart, b.Ip) - 1))
 		}
 	}
 
 	// Reserve the IP if in Active range
-	if dhcp.IPInRange(lsubnet.ActiveStart, lsubnet.ActiveEnd, binding.Ip) {
-		lsubnet.ActiveBits.Set(uint(dhcp.IPRange(lsubnet.ActiveStart, binding.Ip) - 1))
+	if dhcp4.IPInRange(lsubnet.ActiveStart, lsubnet.ActiveEnd, binding.Ip) {
+		lsubnet.ActiveBits.Set(uint(dhcp4.IPRange(lsubnet.ActiveStart, binding.Ip) - 1))
 	}
 
 	lsubnet.Bindings[binding.Mac] = &binding
@@ -183,8 +184,8 @@ func (dt *DataTracker) DeleteBinding(subnetName, mac string) (error, int) {
 		return errors.New("Binding Not Found"), http.StatusNotFound
 	}
 
-	if dhcp.IPInRange(lsubnet.ActiveStart, lsubnet.ActiveEnd, b.Ip) {
-		lsubnet.ActiveBits.Clear(uint(dhcp.IPRange(lsubnet.ActiveStart, b.Ip) - 1))
+	if dhcp4.IPInRange(lsubnet.ActiveStart, lsubnet.ActiveEnd, b.Ip) {
+		lsubnet.ActiveBits.Clear(uint(dhcp4.IPRange(lsubnet.ActiveStart, b.Ip) - 1))
 	}
 
 	delete(lsubnet.Bindings, mac)

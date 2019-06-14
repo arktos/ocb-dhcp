@@ -4,12 +4,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	dhcp "github.com/krolaw/dhcp4"
-	"github.com/willf/bitset"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	dhcp "github.com/krolaw/dhcp4"
+	"github.com/willf/bitset"
 )
 
 func convertByteToOptionValue(code dhcp.OptionCode, b []byte) string {

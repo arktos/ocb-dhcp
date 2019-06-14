@@ -1,9 +1,10 @@
 package main
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/willf/bitset"
-	"testing"
 )
 
 func TestNewSubnet(t *testing.T) {

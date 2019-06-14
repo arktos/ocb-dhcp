@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	dhcp "github.com/krolaw/dhcp4"
-	"github.com/willf/bitset"
 	"net"
 	"sync"
 	"time"
+
+	dhcp "github.com/krolaw/dhcp4"
+	"github.com/willf/bitset"
 )
 
 type Subnet struct {

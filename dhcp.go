@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	dhcp "github.com/krolaw/dhcp4"
 	"net"
 	"os"
+
+	dhcp "github.com/krolaw/dhcp4"
 )
 
 func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {

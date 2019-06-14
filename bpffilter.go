@@ -4,14 +4,15 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"os"
+
 	"github.com/arktos/raw"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/krolaw/dhcp4"
 	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
-	"net"
-	"os"
 )
 
 type BPFListener struct {

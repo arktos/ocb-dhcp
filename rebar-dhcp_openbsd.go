@@ -4,9 +4,10 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"os"
+
 	"golang.org/x/sys/unix"
 	"gopkg.in/gcfg.v1"
-	"os"
 )
 
 type Config struct {
