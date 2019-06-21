@@ -36,9 +36,9 @@ func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {
 
 	// serverIP, _, _ := net.ParseCIDR(sip)
 	handler := &DHCPHandler{
-		ip:   siaddr.To4(),
-		intf: listener.Iface,
-		info: tracker,
+		ip:      siaddr.To4(),
+		intf:    listener.Iface,
+		tracker: tracker,
 	}
 	e := dhcp.Serve(listener, handler)
 	if e != nil {
@@ -49,9 +49,9 @@ func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {
 }
 
 type DHCPHandler struct {
-	info *DataTracker   // Subnet data
-	intf *net.Interface // Interface processing on.
-	ip   net.IP         // Server IP to use
+	tracker *DataTracker   // Subnet data
+	intf    *net.Interface // Interface processing on.
+	ip      net.IP         // Server IP to use
 }
 
 func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) (d dhcp.Packet) {
@@ -63,7 +63,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 	giaddr := p.GIAddr()
 
 	if !giaddr.Equal(net.IPv4zero) {
-		subnet = h.info.FindSubnet(giaddr)
+		subnet = h.tracker.FindSubnet(giaddr)
 	} else {
 		addrs, err := h.intf.Addrs()
 		if err != nil {
@@ -78,7 +78,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 				continue
 			}
 
-			subnet = h.info.FindSubnet(aip)
+			subnet = h.tracker.FindSubnet(aip)
 			if subnet != nil {
 				break
 			}
@@ -88,12 +88,12 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 		if ignore_anonymus {
 			// Search all subnets for a binding. First wins
 			fmt.Fprintln(os.Stdout, "Looking up bound subnet for ", p.CHAddr().String())
-			subnet = h.info.FindBoundIP(p.CHAddr())
+			subnet = h.tracker.FindBoundIP(p.CHAddr())
 		}
 
 		if subnet == nil {
 			// We didn't find a subnet for the interface.  Look for the assigned server IP
-			subnet = h.info.FindSubnet(h.ip)
+			subnet = h.tracker.FindSubnet(h.ip)
 		}
 
 	}
@@ -108,7 +108,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 	switch msgType {
 
 	case dhcp.Discover:
-		lease, binding := subnet.find_or_get_info(h.info, nic, p.CIAddr(), hostname)
+		lease, binding := subnet.find_or_get_info(h.tracker, nic, p.CIAddr(), hostname)
 		if lease == nil {
 			fmt.Fprintln(os.Stdout, "Out of IPs for ", subnet.Name, ", ignoring")
 			return nil
@@ -143,7 +143,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 			return dhcp.ReplyPacket(p, dhcp.NAK, h.ip, nil, 0, nil)
 		}
 
-		lease, binding := subnet.find_info(h.info, nic)
+		lease, binding := subnet.find_info(h.tracker, nic)
 		// Ignore unknown MAC address
 		if ignore_anonymus && binding == nil {
 			fmt.Fprintln(os.Stdout, "Ignoring request from unknown MAC address")
@@ -155,7 +155,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 
 		options, lease_time := subnet.build_options(lease, binding)
 
-		subnet.update_lease_time(h.info, lease, lease_time)
+		subnet.update_lease_time(h.tracker, lease, lease_time)
 
 		reply := dhcp.ReplyPacket(p, dhcp.ACK,
 			h.ip,
@@ -172,7 +172,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 
 	case dhcp.Release, dhcp.Decline:
 		nic := p.CHAddr().String()
-		subnet.free_lease(h.info, nic)
+		subnet.free_lease(h.tracker, nic)
 	}
 	return nil
 }
