@@ -108,7 +108,12 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 	switch msgType {
 
 	case dhcp.Discover:
-		lease, binding := subnet.find_or_get_info(h.tracker, nic, p.CIAddr(), hostname)
+		lease, binding, save := subnet.find_or_get_info(nic, p.CIAddr(), hostname)
+
+		if save {
+			h.tracker.save_data()
+		}
+
 		if lease == nil {
 			fmt.Fprintln(os.Stdout, "Out of IPs for ", subnet.Name, ", ignoring")
 			return nil
@@ -143,7 +148,7 @@ func (h *DHCPHandler) ServeDHCP(p dhcp.Packet, msgType dhcp.MessageType, options
 			return dhcp.ReplyPacket(p, dhcp.NAK, h.ip, nil, 0, nil)
 		}
 
-		lease, binding := subnet.find_info(h.tracker, nic)
+		lease, binding := subnet.find_info(nic)
 		// Ignore unknown MAC address
 		if ignore_anonymus && binding == nil {
 			fmt.Fprintln(os.Stdout, "Ignoring request from unknown MAC address")
