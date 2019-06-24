@@ -3,7 +3,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -23,13 +22,11 @@ type Config struct {
 }
 
 var ignore_anonymus bool
-var config_path, key_pem, cert_pem, data_dir string
-var ifi string
+var config_path, socket_path, data_dir, ifi string
 
 func init() {
 	flag.StringVar(&config_path, "config_path", "/etc/rebar-dhcp.conf", "Path to config file")
-	flag.StringVar(&key_pem, "key_pem", "/etc/dhcp-https-key.pem", "Path to key file")
-	flag.StringVar(&cert_pem, "cert_pem", "/etc/dhcp-https-cert.pem", "Path to cert file")
+	flag.StringVar(&socket_path, "socket_path", "/var/run/dhcpd.sock", "Path to FCGI-socket")
 	flag.StringVar(&data_dir, "data_dir", "/var/cache/rebar-dhcp", "Path to store data")
 	flag.StringVar(&ifi, "interface", "em0", "Network interface to listen on")
 	flag.BoolVar(&ignore_anonymus, "ignore_anonymus", false, "Ignore unknown MAC addresses")
@@ -53,10 +50,7 @@ func main() {
 	tracker := NewDataTracker(fs)
 	tracker.load_data()
 
-	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
-	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
-
-	fe := NewFrontend(tls_cfg, cfg, tracker)
+	fe := NewFrontend(socket_path, cfg, tracker)
 
 	// Det här är en av två saker som kräver extra privilegier, den andra
 	// är NewBPFListener() som anropas av RunDHCPHandler i dhcp.go. Kunde

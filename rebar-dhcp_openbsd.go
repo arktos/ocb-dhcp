@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -19,13 +18,11 @@ type Config struct {
 }
 
 var ignore_anonymus bool
-var config_path, key_pem, cert_pem, data_dir string
-var ifi string
+var config_path, socket_path, data_dir, ifi string
 
 func init() {
 	flag.StringVar(&config_path, "config_path", "/etc/rebar-dhcp.conf", "Path to config file")
-	flag.StringVar(&key_pem, "key_pem", "/etc/dhcp-https-key.pem", "Path to key file")
-	flag.StringVar(&cert_pem, "cert_pem", "/etc/dhcp-https-cert.pem", "Path to cert file")
+	flag.StringVar(&socket_path, "socket_path", "/var/run/dhcpd.sock", "Path to FCGI-socket")
 	flag.StringVar(&data_dir, "data_dir", "/var/cache/rebar-dhcp", "Path to store data")
 	flag.StringVar(&ifi, "interface", "em0", "Network interface to listen on")
 	flag.BoolVar(&ignore_anonymus, "ignore_anonymus", false, "Ignore unknown MAC addresses")
@@ -33,11 +30,6 @@ func init() {
 
 func main() {
 
-	// err := unix.Pledge("stdio wpath inet unveil", "")
-	// if err != nil {
-	//     fmt.Println("Couldn't pledge, exiting.")
-	//     os.Exit(1)
-	// }
 	flag.Parse()
 
 	var cfg Config
@@ -56,20 +48,18 @@ func main() {
 	tracker := NewDataTracker(fs)
 	tracker.load_data()
 
-	certs, _ := tls.LoadX509KeyPair(cert_pem, key_pem)
-	tls_cfg := &tls.Config{Certificates: []tls.Certificate{certs}}
-
-	fe := NewFrontend(tls_cfg, cfg, tracker)
+	fe := NewFrontend(socket_path, cfg, tracker)
 	listener, err := NewBPFListener(ifi)
 
 	err = unix.Unveil("/var/cache/rebar-dhcp", "rwc")
+	err = unix.Unveil(socket_path, "rwc")
 	err = unix.UnveilBlock()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Couldn't block filesystem access, exiting.")
 		os.Exit(1)
 	}
-	// Sådär då, nu kan processen enbart läsa/skriva till en
-	// specifik fil.
+	// Sådär då, nu kan processen enbart läsa/skriva till
+	// lånedatabasen samt en sockel.
 
 	// Här borde man kunna kasta bort alla privilegier.
 	// Men det kan man inte, för av någon anledning går
@@ -81,16 +71,11 @@ func main() {
 
 	go RunDhcpHandler(tracker, listener)
 
-	// Men här går det även om det känns lite “för sent”…
-	// uid, _ := user.Lookup("nobody")
-	// gid, _ := user.LookupGroup("nogroup")
-	// gid_int, _ := strconv.Atoi(gid.Gid)
-	// uid_int, _ := strconv.Atoi(uid.Uid)
-
-	// Om man inte sätter uid först så har man inga rättigheter
-	// för att sätta gid.
-	// err = unix.Setgid(gid_int)
-	// err = unix.Setuid(uid_int)
+	// err := unix.Pledge("stdio", "")
+	// if err != nil {
+	//     fmt.Println("Couldn't pledge, exiting.")
+	//     os.Exit(1)
+	// }
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

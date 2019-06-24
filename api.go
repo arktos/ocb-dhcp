@@ -1,10 +1,11 @@
 package main
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/fcgi"
+	"net/url"
 	"os"
 	"time"
 
@@ -79,18 +80,18 @@ func NewBinding() *Binding {
  * Structure for the front end with a pointer to the backend
  */
 type Frontend struct {
-	Tracker  *DataTracker
-	data_dir string
-	certs    *tls.Config
-	cfg      Config
+	Tracker     *DataTracker
+	data_dir    string
+	socket_path string
+	cfg         Config
 }
 
-func NewFrontend(certs *tls.Config, cfg Config, store *DataTracker) *Frontend {
+func NewFrontend(socket string, cfg Config, store *DataTracker) *Frontend {
 	fe := &Frontend{
-		data_dir: data_dir,
-		certs:    certs,
-		cfg:      cfg,
-		Tracker:  store,
+		data_dir:    data_dir,
+		socket_path: socket,
+		cfg:         cfg,
+		Tracker:     store,
 	}
 	return fe
 }
@@ -253,55 +254,42 @@ func (fe *Frontend) NextServer(w rest.ResponseWriter, r *rest.Request) {
 }
 
 func (fe *Frontend) GetChaddr(w rest.ResponseWriter, r *rest.Request) {
-	// Skulle behöva läsa på lite om
-	// https://github.com/ant0ine/go-json-rest
-	// Behövs nämligen två parametrar: subnet och chaddr.
-	subnetName := r.PathParam("id")
-	chaddr := r.PathParam("mac")
+	leases := make([]*Lease, 0)
+	chaddr, _ := url.QueryUnescape(r.PathParam("mac"))
 
-	fmt.Println(chaddr)
-	// Verkar som om ingen annan funktion låser subnätet, kanske inte jag heller
-	// behöver göra det? Jag prövar, det kan ju gå…
-	subnet := fe.Tracker.Subnets[subnetName]
-	if subnet == nil {
-		rest.Error(w, "Not Found", http.StatusNotFound)
-		return
+	// Onödigt dyrt att köra gång på gång i en slinga.
+	t := time.Now()
+	for _, v := range fe.Tracker.Subnets {
+
+		// Om jag läser koden rätt så är subnet.Leases en karta med en sträng
+		// motsvarande en MAC som nyckel och en pekare till ett lån som värde.
+		// Enda problemet här är väl hur strängen skall se ut?
+		// Nu fungerar enbart ett värde på formen aa:aa:aa:aa:aa:aa.
+		l, ok := v.Leases[chaddr]
+		if !ok {
+			continue
+		}
+		if !(l.ExpireTime.After(t)) {
+			// if !valid {
+			continue
+		}
+		leases = append(leases, l)
 	}
 
-	// Om jag läser koden rätt så är subnet.Leases en karta med en sträng
-	// motsvarande en MAC som nyckel och en pekare till ett lån som värde.
-	// Enda problemet här är väl hur strängen skall se ut?
-	l, ok := subnet.Leases[chaddr]
-	if !ok {
+	if len(leases) > 0 {
+		w.WriteJson(leases)
+	} else {
 		rest.Error(w, "Not Found", http.StatusNotFound)
 	}
-
-	fmt.Println(*l)
-	// Okej, vi har nu ett lån. Vilken datastruktur i go går att konvertera
-	// till JSON på formen {'mac': 'blablabla', 'ip': '10.0.0.1'}?
-	// Enklaste är väl att helt enkelt använda en Struct Lease{}?
-	// Låt vara att den kanske läcker lite information, men är man redan
-	// här och rotar så…
-	w.WriteJson(*l)
 }
 
 func (fe *Frontend) RunServer(blocking bool) {
 	api := rest.NewApi()
-	api.Use(&rest.AuthBasicMiddleware{
-		Realm: "test zone",
-		Authenticator: func(userId string, password string) bool {
-			if userId == fe.cfg.Network.Username &&
-				password == fe.cfg.Network.Password {
-				return true
-			}
-			return false
-		},
-	})
 	api.Use(rest.DefaultDevStack...)
 	router, err := rest.MakeRouter(
 		rest.Get("/subnets", fe.GetAllSubnets),
 		rest.Get("/subnets/#id", fe.GetSubnet),
-		rest.Get("/subnets/#id/#mac", fe.GetChaddr),
+		rest.Get("/chaddr/#mac", fe.GetChaddr),
 		rest.Post("/subnets", fe.CreateSubnet),
 		rest.Put("/subnets/#id", fe.UpdateSubnet),
 		rest.Delete("/subnets/#id", fe.DeleteSubnet),
@@ -315,20 +303,35 @@ func (fe *Frontend) RunServer(blocking bool) {
 	}
 	api.SetApp(router)
 
-	connStr := fmt.Sprintf(":%d", fe.cfg.Network.Port)
-	fmt.Println("Web Interface Using", connStr)
-
-	server := http.Server{
-		Addr:      connStr,
-		Handler:   api.MakeHandler(),
-		TLSConfig: fe.certs,
+	if e := os.RemoveAll(fe.socket_path); e != nil {
+		fmt.Fprintln(os.Stderr, e)
+		os.Exit(1)
 	}
 
-	defer server.Close()
-	e := server.ListenAndServeTLS("", "")
-	// e := http.ListenAndServeTLS(connStr, fe.cert_pem, fe.key_pem, api.MakeHandler())
-	if e != nil {
+	listener, err := net.Listen("unix", fe.socket_path)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	defer listener.Close()
+	defer func() {
+		os.Remove(fe.socket_path)
+	}()
+
+	if e := os.Chown(fe.socket_path, -1, 67); e != nil {
+		fmt.Fprintln(os.Stderr, e)
+		os.Exit(1)
+	}
+
+	if e := os.Chmod(fe.socket_path, 660); e != nil {
+		fmt.Fprintln(os.Stderr, e)
+		os.Exit(1)
+	}
+
+	fmt.Println("Web Interface Using", fe.socket_path)
+	if e := fcgi.Serve(listener, http.StripPrefix("/dhcp", api.MakeHandler())); e != nil {
+		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}
 }
