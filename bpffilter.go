@@ -88,10 +88,14 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		dst_hwaddr = layers.EthernetBroadcast
 	} else {
 		pp := dhcp4.Packet(p)
-		dst_addr, _, _ := net.SplitHostPort(addr.String())
+		dst_addr, _, err := net.SplitHostPort(addr.String())
+		if err != nil {
+			fmt.Println(err)
+		}
 		iplayer.SrcIP = b.sip
 		iplayer.DstIP = net.ParseIP(dst_addr)
 		dst_hwaddr = pp.CHAddr() // Is this a bad hack?
+
 	}
 
 	udplayer := &layers.UDP{SrcPort: 67, DstPort: 68}
@@ -100,11 +104,14 @@ func (b *BPFListener) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	buf := gopacket.NewSerializeBuffer()
 	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 
-	gopacket.SerializeLayers(buf, opts,
+	err = gopacket.SerializeLayers(buf, opts,
 		&layers.Ethernet{SrcMAC: b.Iface.HardwareAddr, DstMAC: dst_hwaddr, EthernetType: 0x800},
 		iplayer,
 		udplayer,
 		gopacket.Payload(p))
+	if err != nil {
+		fmt.Println("SerializeLayers failed:", err)
+	}
 
 	// Send it.
 	return b.handle.WriteTo(buf.Bytes(), &raw.Addr{})
@@ -125,8 +132,16 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 	}
 
 	// Not the most elegant way of doing things :(
-	addrs, _ := ifi.Addrs() //[]Addr
-	sip := net.ParseIP(addrs[0].String())
+	addrs, err := ifi.Addrs() //[]Addr
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	sip, _, err := net.ParseCIDR(addrs[0].String())
+	if err != nil {
+		fmt.Println("Error setting up BPF: ", err)
+		os.Exit(1)
+	}
 
 	// Open the device raw device for IP over ethernet
 	config := &raw.Config{} // Ignored but needed on BSD
