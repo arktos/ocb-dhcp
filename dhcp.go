@@ -42,8 +42,7 @@ func RunDhcpHandler(tracker *DataTracker, listener *BPFListener) error {
 	}
 	e := dhcp.Serve(listener, handler)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
+		return e
 	}
 	return nil
 }

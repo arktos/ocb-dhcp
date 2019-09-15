@@ -83,17 +83,37 @@ type Frontend struct {
 	Tracker     *DataTracker
 	data_dir    string
 	socket_path string
+	socket      net.Listener
 	cfg         Config
 }
 
-func NewFrontend(socket string, cfg Config, store *DataTracker) *Frontend {
+func NewFrontend(socket string, cfg Config, store *DataTracker) (*Frontend, error) {
+
+	if e := os.RemoveAll(socket); e != nil {
+		return nil, e
+	}
+
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		return nil, err
+	}
+
+	if e := os.Chown(socket, -1, 67); e != nil {
+		return nil, e
+	}
+
+	if e := os.Chmod(socket, 660); e != nil {
+		return nil, e
+	}
+
 	fe := &Frontend{
 		data_dir:    data_dir,
 		socket_path: socket,
+		socket:      listener,
 		cfg:         cfg,
 		Tracker:     store,
 	}
-	return fe
+	return fe, nil
 }
 
 // List function
@@ -283,7 +303,7 @@ func (fe *Frontend) GetChaddr(w rest.ResponseWriter, r *rest.Request) {
 	}
 }
 
-func (fe *Frontend) RunServer(blocking bool) {
+func (fe *Frontend) RunServer(blocking bool) error {
 	api := rest.NewApi()
 	api.Use(rest.DefaultDevStack...)
 	router, err := rest.MakeRouter(
@@ -298,40 +318,20 @@ func (fe *Frontend) RunServer(blocking bool) {
 		rest.Put("/subnets/#id/next_server/#ip", fe.NextServer),
 	)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 	api.SetApp(router)
 
-	if e := os.RemoveAll(fe.socket_path); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
+	defer fe.socket.Close()
 
-	listener, err := net.Listen("unix", fe.socket_path)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	defer listener.Close()
 	defer func() {
+		// Will not work as privileges are already dropped…
 		os.Remove(fe.socket_path)
 	}()
 
-	if e := os.Chown(fe.socket_path, -1, 67); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
-
-	if e := os.Chmod(fe.socket_path, 660); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
-
 	fmt.Println("Web Interface Using", fe.socket_path)
-	if e := fcgi.Serve(listener, http.StripPrefix("/dhcp", api.MakeHandler())); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
+	if e := fcgi.Serve(fe.socket, http.StripPrefix("/dhcp", api.MakeHandler())); e != nil {
+		return e
 	}
+	return nil
 }

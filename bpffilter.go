@@ -128,19 +128,19 @@ func NewBPFListener(interfaceName string) (*BPFListener, error) {
 	ifi, err := net.InterfaceByName(interfaceName) // Interface index
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "No interface %s on this host", interfaceName)
-		os.Exit(1)
+		return nil, err
 	}
 
 	// Not the most elegant way of doing things :(
 	addrs, err := ifi.Addrs() //[]Addr
 	if err != nil {
-		fmt.Println(err)
+		return nil, err
 	}
 
 	sip, _, err := net.ParseCIDR(addrs[0].String())
 	if err != nil {
 		fmt.Println("Error setting up BPF: ", err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	// Open the device raw device for IP over ethernet

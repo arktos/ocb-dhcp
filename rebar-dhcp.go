@@ -50,14 +50,11 @@ func main() {
 	tracker := NewDataTracker(fs)
 	tracker.load_data()
 
-	fe := NewFrontend(socket_path, cfg, tracker)
-
-	// Det här är en av två saker som kräver extra privilegier, den andra
-	// är NewBPFListener() som anropas av RunDHCPHandler i dhcp.go. Kunde
-	// man initialisera bägge här skulle man kunna kasta bort alla extra
-	// privilegier efter denna rad.
-	// Anropskedjan som är intressant ser ut som:
-	// StartDhcpHandlers() -> RunDHCPHandler() -> NewBPFListener()
+	fe, err := NewFrontend(socket_path, cfg, tracker)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	// Varför behöver “listener” egentligen namnet på nätverksgränssnittet?
 	// Vi har redan en pekare *iface.
@@ -66,11 +63,18 @@ func main() {
 	// redan skickas vidare som argument överallt så…
 	listener, err := NewBPFListener(ifi)
 
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	// Här borde man kunna kasta bort alla privilegier.
 	// Men det kan man inte, för av någon anledning går
 	// det inte att spara data då…
 
 	go RunDhcpHandler(tracker, listener)
+
+	fe.RunServer(true)
 
 	// Men här går det även om det känns lite “för sent”…
 	uid, _ := user.Lookup("nobody")
@@ -88,5 +92,4 @@ func main() {
 		os.Exit(1)
 	}
 
-	fe.RunServer(true)
 }
