@@ -24,8 +24,12 @@ func get_frontend() (*Frontend, http.Handler) {
 	if err != nil {
 		log.Panic(err)
 	}
-	the_fe := NewFrontend("/etc/dhcp-https-cert.pem", "/etc/dhcp-https-cert.pem", cfg, fs)
-	the_fe.RunServer(false)
+	the_fe, err := NewFrontend("api.sock", cfg, fs)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	the_fe.RunServer()
 	return the_fe, handler
 }
 

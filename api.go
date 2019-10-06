@@ -1,12 +1,11 @@
 package main
 
 import (
-	"fmt"
+	// "fmt"
 	"net"
 	"net/http"
 	"net/http/fcgi"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/ant0ine/go-json-rest/rest"
@@ -14,7 +13,7 @@ import (
 )
 
 /*
- * Managment API Structures
+ * Management API Structures
  *
  * These are the management API structures
  *
@@ -80,48 +79,26 @@ func NewBinding() *Binding {
  * Structure for the front end with a pointer to the backend
  */
 type Frontend struct {
-	Tracker     *DataTracker
-	data_dir    string
-	socket_path string
-	socket      net.Listener
-	cfg         Config
+	Tracker  *DataTracker
+	listener net.Listener
+	cfg      Config
 }
 
-func NewFrontend(socket string, cfg Config, store *DataTracker) (*Frontend, error) {
-
-	if e := os.RemoveAll(socket); e != nil {
-		return nil, e
-	}
-
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		return nil, err
-	}
-
-	if e := os.Chown(socket, -1, 67); e != nil {
-		return nil, e
-	}
-
-	if e := os.Chmod(socket, 660); e != nil {
-		return nil, e
-	}
-
+func NewFrontend(socket net.Listener, cfg Config, store *DataTracker) *Frontend {
 	fe := &Frontend{
-		data_dir:    data_dir,
-		socket_path: socket,
-		socket:      listener,
-		cfg:         cfg,
-		Tracker:     store,
+		Tracker:  store,
+		listener: socket,
+		cfg:      cfg,
 	}
-	return fe, nil
+	return fe
 }
 
 // List function
 func (fe *Frontend) GetAllSubnets(w rest.ResponseWriter, r *rest.Request) {
-	nets := make([]*ApiSubnet, 0)
+	nets := make([]*Subnet, 0)
 
 	for _, s := range fe.Tracker.Subnets {
-		as := convertSubnetToApiSubnet(s)
+		as := s
 		nets = append(nets, as)
 	}
 
@@ -137,7 +114,7 @@ func (fe *Frontend) GetSubnet(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
-	w.WriteJson(convertSubnetToApiSubnet(subnet))
+	w.WriteJson(subnet)
 }
 
 // Create function
@@ -317,21 +294,15 @@ func (fe *Frontend) RunServer(blocking bool) error {
 		rest.Delete("/subnets/#id/bind/#mac", fe.UnbindSubnet),
 		rest.Put("/subnets/#id/next_server/#ip", fe.NextServer),
 	)
+
 	if err != nil {
 		return err
 	}
 	api.SetApp(router)
 
-	defer fe.socket.Close()
+	defer fe.listener.Close()
 
-	defer func() {
-		// Will not work as privileges are already dropped…
-		os.Remove(fe.socket_path)
-	}()
+	// fmt.Println("Web Interface Using", fe.listener.Addr())
+	return fcgi.Serve(fe.listener, http.StripPrefix("/dhcp", api.MakeHandler()))
 
-	fmt.Println("Web Interface Using", fe.socket_path)
-	if e := fcgi.Serve(fe.socket, http.StripPrefix("/dhcp", api.MakeHandler())); e != nil {
-		return e
-	}
-	return nil
 }
