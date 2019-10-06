@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -22,7 +23,7 @@ var config_path, socket_path, data_dir, ifi string
 
 func init() {
 	flag.StringVar(&config_path, "config_path", "/etc/rebar-dhcp.conf", "Path to config file")
-	flag.StringVar(&socket_path, "socket_path", "/var/run/dhcpd.sock", "Path to FCGI-socket")
+	flag.StringVar(&socket_path, "socket_path", "9002", "FCGI-socket listening port")
 	flag.StringVar(&data_dir, "data_dir", "/var/cache/rebar-dhcp", "Path to store data")
 	flag.StringVar(&ifi, "interface", "em0", "Network interface to listen on")
 	flag.BoolVar(&ignore_anonymus, "ignore_anonymus", false, "Ignore unknown MAC addresses")
@@ -48,11 +49,19 @@ func main() {
 	tracker := NewDataTracker(fs)
 	tracker.load_data()
 
-	fe := NewFrontend(socket_path, cfg, tracker)
+	sock, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", socket_path))
+
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	fe := NewFrontend(sock, cfg, tracker)
+
 	listener, err := NewBPFListener(ifi)
 
 	err = unix.Unveil("/var/cache/rebar-dhcp", "rwc")
-	err = unix.Unveil(socket_path, "rwc")
+	// err = unix.Unveil(socket_path, "rwc")
 	err = unix.UnveilBlock()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Couldn't block filesystem access, exiting.")
@@ -81,6 +90,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	err = fe.RunServer(true) // Hantera ev. fel
 
-	fe.RunServer(true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

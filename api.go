@@ -1,12 +1,11 @@
 package main
 
 import (
-	"fmt"
+	// "fmt"
 	"net"
 	"net/http"
 	"net/http/fcgi"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/ant0ine/go-json-rest/rest"
@@ -80,28 +79,28 @@ func NewBinding() *Binding {
  * Structure for the front end with a pointer to the backend
  */
 type Frontend struct {
-	Tracker     *DataTracker
-	data_dir    string
-	socket_path string
-	cfg         Config
+	Tracker  *DataTracker
+	data_dir string
+	listener net.Listener
+	cfg      Config
 }
 
-func NewFrontend(socket string, cfg Config, store *DataTracker) *Frontend {
+func NewFrontend(socket net.Listener, cfg Config, store *DataTracker) *Frontend {
 	fe := &Frontend{
-		data_dir:    data_dir,
-		socket_path: socket,
-		cfg:         cfg,
-		Tracker:     store,
+		data_dir: data_dir,
+		listener: socket,
+		cfg:      cfg,
+		Tracker:  store,
 	}
 	return fe
 }
 
 // List function
 func (fe *Frontend) GetAllSubnets(w rest.ResponseWriter, r *rest.Request) {
-	nets := make([]*ApiSubnet, 0)
+	nets := make([]*Subnet, 0)
 
 	for _, s := range fe.Tracker.Subnets {
-		as := convertSubnetToApiSubnet(s)
+		as := s
 		nets = append(nets, as)
 	}
 
@@ -117,7 +116,7 @@ func (fe *Frontend) GetSubnet(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
-	w.WriteJson(convertSubnetToApiSubnet(subnet))
+	w.WriteJson(subnet)
 }
 
 // Create function
@@ -283,7 +282,7 @@ func (fe *Frontend) GetChaddr(w rest.ResponseWriter, r *rest.Request) {
 	}
 }
 
-func (fe *Frontend) RunServer(blocking bool) {
+func (fe *Frontend) RunServer(blocking bool) error {
 	api := rest.NewApi()
 	api.Use(rest.DefaultDevStack...)
 	router, err := rest.MakeRouter(
@@ -297,41 +296,14 @@ func (fe *Frontend) RunServer(blocking bool) {
 		rest.Delete("/subnets/#id/bind/#mac", fe.UnbindSubnet),
 		rest.Put("/subnets/#id/next_server/#ip", fe.NextServer),
 	)
+
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 	api.SetApp(router)
 
-	if e := os.RemoveAll(fe.socket_path); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
+	defer fe.listener.Close()
 
-	listener, err := net.Listen("unix", fe.socket_path)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	defer listener.Close()
-	defer func() {
-		os.Remove(fe.socket_path)
-	}()
-
-	if e := os.Chown(fe.socket_path, -1, 67); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
-
-	if e := os.Chmod(fe.socket_path, 660); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
-
-	fmt.Println("Web Interface Using", fe.socket_path)
-	if e := fcgi.Serve(listener, http.StripPrefix("/dhcp", api.MakeHandler())); e != nil {
-		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
-	}
+	// fmt.Println("Web Interface Using", fe.listener.Addr())
+	return fcgi.Serve(fe.listener, http.StripPrefix("/dhcp", api.MakeHandler()))
 }
